@@ -6,4 +6,5 @@ This document presents an evaluation of individual differential privacy (iDP) in
 
 The following image illustrates results from our experiments:
 
-![Experiment Results](./experiments/experiment_1efe2bea763cb2e4cddebaaf80dafa46/combined_sampling.png)
+![Experiment Results](./experiments/experiment_b0bc6513edce414c4065c148efe05e0a/combined_sampling.png)
+![Experiment Results](./experiments/experiment_b0bc6513edce414c4065c148efe05e0a/combined_clipping.png)
