@@ -1,0 +1,41 @@
+{
+  "args": {
+    "accountant": "rdp",
+    "individualize": "clipping",
+    "weights": null,
+    "adapt_weights_to_budgets": true,
+    "target_delta": 1e-05,
+    "epochs": 100,
+    "max_grad_norm": 1.0,
+    "noise_multiplier": 1.0,
+    "n_data": 10000
+  },
+  "privacy_group_fixed": [
+    1.0,
+    5.75,
+    10.5,
+    15.25,
+    20.0
+  ],
+  "privacy_group_var": [
+    1.0,
+    5.75,
+    10.5,
+    15.25,
+    20.0
+  ],
+  "portion_size_var": [
+    0.0,
+    0.225,
+    0.45,
+    0.675,
+    0.9
+  ],
+  "deltas": [
+    1e-10,
+    1e-08,
+    1e-06,
+    0.0001,
+    0.01
+  ]
+}
