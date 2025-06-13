@@ -1,16 +1,41 @@
-from opacus_new.accountants.utils import get_sample_rates as get_sample_rates_boenisch
 import numpy as np
-from dp_accounting.pld import privacy_loss_distribution
-from typing import List, Tuple
+from opacus_new.accountants.utils import get_sample_rates as get_sample_rates_boenisch
+from dp_accounting.rdp.rdp_privacy_accountant import (
+    _compute_rdp_poisson_subsampled_gaussian,
+    compute_epsilon,
+)
+import concurrent.futures
+import os
 from time import time
+from functools import cache
+from absl import logging
 
-MAX_SIGMA = 1e6
+logging.set_verbosity(
+    logging.ERROR
+)  # suppress dp_accounting numerical warnings for RDP
+
 MIN_Q = 1e-9
 MAX_Q = 1
-VDI = 0.1
+MAX_SIGMA = 1e6
+DEFAULT_RDP_ORDERS = (
+    [1 + x / 10.0 for x in range(1, 100)] + list(range(11, 64)) + [128, 256, 512, 1024]
+)
 
 
-def get_sample_rate_numeric(
+@cache
+def _rdp_vec(sigma: float, q: float):
+    return _compute_rdp_poisson_subsampled_gaussian(
+        q=q, noise_multiplier=sigma, orders=DEFAULT_RDP_ORDERS
+    )
+
+
+def epsilon_for_delta(sigma: float, q: float, steps: int, delta: float) -> float:
+    rdp = _rdp_vec(sigma, q) * steps
+    epsilon, _ = compute_epsilon(DEFAULT_RDP_ORDERS, rdp, delta)
+    return epsilon
+
+
+def get_sample_rate_estimate_rdp(
     target_epsilon: float,
     target_delta: float,
     noise_multiplier: float,
@@ -18,42 +43,27 @@ def get_sample_rate_numeric(
     precision: float = 0.001,
 ) -> float:
     q_low, q_high = MIN_Q, MAX_Q
-    accountant = privacy_loss_distribution.from_gaussian_mechanism(
-        standard_deviation=noise_multiplier,
-        sampling_prob=q_low,
-        value_discretization_interval=VDI,
-    ).self_compose(steps)
-    eps_low = accountant.get_epsilon_for_delta(target_delta)
+    eps_low = epsilon_for_delta(
+        sigma=noise_multiplier, q=q_low, steps=steps, delta=target_delta
+    )
     if eps_low > target_epsilon:
         raise ValueError("The privacy budget is too low.")
-    accountant = privacy_loss_distribution.from_gaussian_mechanism(
-        standard_deviation=noise_multiplier,
-        sampling_prob=q_high,
-        value_discretization_interval=VDI,
-    ).self_compose(steps)
-    eps_high = accountant.get_epsilon_for_delta(target_delta)
-    print("Getting epsilon")
-    while eps_high < 0:  # decrease q_high whenever a numerical error happens
+    eps_high = epsilon_for_delta(
+        sigma=noise_multiplier, q=q_high, steps=steps, delta=target_delta
+    )
+    while eps_high < 0:
         q_high *= 0.9
-        accountant = privacy_loss_distribution.from_gaussian_mechanism(
-            standard_deviation=noise_multiplier,
-            sampling_prob=q_high,
-            value_discretization_interval=VDI,
-        ).self_compose(steps)
-        eps_high = accountant.get_epsilon_for_delta(target_delta)
-    if eps_high < target_epsilon:
-        raise ValueError(
-            f"The given noise_multiplier {noise_multiplier} is " f"too high."
+        eps_high = epsilon_for_delta(
+            sigma=noise_multiplier, q=q_high, steps=steps, delta=target_delta
         )
-    print("getting q")
+    if eps_high < target_epsilon:
+        raise ValueError(f"The given noise_multiplier {noise_multiplier} is too high.")
+
     while q_low / q_high < 1 - precision:
         q = (q_low + q_high) / 2
-        accountant = privacy_loss_distribution.from_gaussian_mechanism(
-            standard_deviation=noise_multiplier,
-            sampling_prob=q,
-            value_discretization_interval=VDI,
-        ).self_compose(steps)
-        eps = accountant.get_epsilon_for_delta(target_delta)
+        eps = epsilon_for_delta(
+            sigma=noise_multiplier, q=q, steps=steps, delta=target_delta
+        )
         if eps < target_epsilon:
             q_low = q
         else:
@@ -62,94 +72,97 @@ def get_sample_rate_numeric(
     return q_low
 
 
-def get_sample_rates_numeric(
-    ratios: List[float],
-    target_epsilons: List[float],
+def _q_worker(args: tuple[int, float, float, float, int]):
+    idx, eps, sigma, delta, steps = args
+    try:
+        q = get_sample_rate_estimate_rdp(
+            target_epsilon=eps,
+            target_delta=delta,
+            noise_multiplier=sigma,
+            steps=steps,
+        )
+        return idx, q
+    except ValueError:
+        return idx, None
+
+
+def get_sample_rate_estimates_rdp(
+    ratios: list[float],
+    target_epsilons: list[float],
     target_delta: float,
     default_sample_rate: float,
     steps: int,
     precision: float = 0.001,
-    **kwargs,
-) -> Tuple[float, np.ndarray]:
-    n_groups = len(ratios)
-    ratios = np.asarray(ratios)
+):
+    ratios = np.asarray(ratios, dtype=np.float32)
+    n_groups = len(target_epsilons)
     sigma_low, sigma_high = 1e-5, 1e-3
     for group, target_epsilon in enumerate(target_epsilons):
-        eps_high = float("inf")
-        sigma_high_group = 1e-3
-        print("getting sigma")
+        eps_high, sigma_high_group = np.inf, 1e-3
         while eps_high > target_epsilon:
-            sigma_high_group = 2 * sigma_high_group
-            if sigma_high_group > sigma_high:
-                sigma_high = sigma_high_group
-            accountant = privacy_loss_distribution.from_gaussian_mechanism(
-                standard_deviation=sigma_high_group,
-                sampling_prob=default_sample_rate,
-                value_discretization_interval=VDI,
-            ).self_compose(steps)
-            eps_high = accountant.get_epsilon_for_delta(target_delta)
+            sigma_high_group *= 2
+            sigma_high = max(sigma_high, sigma_high_group)
+            eps_high = epsilon_for_delta(
+                sigma=sigma_high_group,
+                q=default_sample_rate,
+                steps=steps,
+                delta=target_delta,
+            )
             if sigma_high_group > MAX_SIGMA:
                 raise ValueError(
-                    f"The privacy budget ({target_epsilon}) of"
-                    f"group {group} is too low."
+                    f"The privacy budget ({target_epsilon}) of group {group} is too low."
                 )
 
-    q_mean = MAX_Q
-    qs = np.array([q_mean] * n_groups, dtype=np.float32)
-    while sigma_low / sigma_high < 1 - precision:
-        sigma = (sigma_high + sigma_low) / 2
-        q_mean = 0
-        for group, target_epsilon in enumerate(target_epsilons):
-            try:
-                q = get_sample_rate_numeric(
-                    target_epsilon=target_epsilon,
-                    target_delta=target_delta,
-                    noise_multiplier=sigma,
-                    steps=steps,
-                    precision=precision,
-                    **kwargs,
-                )
-                qs[group] = q
-                q_mean += q * ratios[group]
-                if q_mean > default_sample_rate:
-                    sigma_high = sigma
-                    break
-            except ValueError:
-                continue
-        q_mean = sum(qs * ratios)
-        if q_mean > default_sample_rate:
-            sigma_high = sigma
-        else:
-            sigma_low = sigma
-    return sigma_high, list(qs)
+    qs = np.zeros(n_groups, dtype=np.float32)
+    max_workers = min(n_groups, os.cpu_count() or 1)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
+        while sigma_low / sigma_high < 1 - precision:
+            sigma = 0.5 * (sigma_low + sigma_high)
+            tasks = [
+                (idx, eps, sigma, target_delta, steps)
+                for idx, eps in enumerate(target_epsilons)
+            ]
+            for idx, q in pool.map(_q_worker, tasks):
+                qs[idx] = q if q is not None else 0.0
+            q_mean = float(np.dot(qs, ratios))
+            if q_mean > default_sample_rate:
+                sigma_high = sigma
+            else:
+                sigma_low = sigma
+    return sigma_high, qs
 
 
 if __name__ == "__main__":
-    epsilons = [1.0, 20.0]
-    ratios = [0.05, 0.95]
+    epsilons = [1.0, 5.0, 10.0, 15.0, 20.0]
+    ratios = [0.05, 0.10, 0.15, 0.40, 0.30]
+    assert np.isclose(sum(ratios), 1.0)
     target_delta = 1e-5
-    n_data = 10_000
-    default_batch_size = 64
+    n_data = 50_000
+    default_batch_size = 1024
     epochs = 100
     tick = time()
-    sigma_sample_boenisch, qs_boenisch = get_sample_rates_boenisch(
-        ratios=ratios,
-        target_epsilons=epsilons,
-        target_delta=target_delta,
-        default_sample_rate=default_batch_size / n_data,
-        steps=epochs * n_data // default_batch_size,
+    sigma_sample_rdp, qs_rdp = get_sample_rate_estimates_rdp(
+        ratios,
+        epsilons,
+        target_delta,
+        default_batch_size / n_data,
+        epochs * n_data // default_batch_size,
     )
     tock = time()
-    print(f"Boenisch: sigma_sample = {sigma_sample_boenisch}, qs = {qs_boenisch}")
-    print(f"Boenisch took {tock-tick}s")
+    time_rdp = tock - tick
+    print(f"RDP: sigma_sample = {sigma_sample_rdp:.4f}, qs = {qs_rdp}")
+    print(f"RDP took {time_rdp:.4f}s")
     tick = time()
-    sigma_sample_numeric, qs_numeric = get_sample_rates_numeric(
-        ratios=ratios,
-        target_epsilons=epsilons,
-        target_delta=target_delta,
-        default_sample_rate=default_batch_size / n_data,
-        steps=epochs * n_data // default_batch_size,
+    sigma_sample_boenisch, qs_boenisch = get_sample_rates_boenisch(
+        ratios,
+        epsilons,
+        target_delta,
+        default_batch_size / n_data,
+        epochs * n_data // default_batch_size,
     )
     tock = time()
-    print(f"Numeric: sigma_sample = {sigma_sample_numeric}, qs = {qs_numeric}")
-    print(f"Numeric took {tock-tick}s")
+    time_boenisch = tock - tick
+    print(
+        f"Boenisch: sigma_sample = {sigma_sample_boenisch:.4f}, qs = {np.array(qs_boenisch)}"
+    )
+    print(f"Boenisch took {time_boenisch:.4f}s")
