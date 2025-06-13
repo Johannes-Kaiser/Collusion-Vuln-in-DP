@@ -105,15 +105,18 @@ def get_noise_multipliers(
         The noise level sigma for each privacy group to ensure privacy
         budgets of target_epsilons with target_delta
     """
-    return [get_noise_multiplier(
-        target_epsilon=budget,
-        target_delta=target_delta,
-        sample_rate=sample_rate,
-        steps=steps,
-        accountant=accountant,
-        precision=precision,
-        **kwargs,
-    ) for budget in target_epsilons]
+    return [
+        get_noise_multiplier(
+            target_epsilon=budget,
+            target_delta=target_delta,
+            sample_rate=sample_rate,
+            steps=steps,
+            accountant=accountant,
+            precision=precision,
+            **kwargs,
+        )
+        for budget in target_epsilons
+    ]
 
 
 def get_sample_rate(
@@ -148,13 +151,14 @@ def get_sample_rate(
         raise ValueError("The privacy budget is too low.")
     accountant.history = [(noise_multiplier, q_high, steps)]
     eps_high = accountant.get_epsilon(delta=target_delta, **kwargs)
-    while eps_high < 0:     # decrease q_high whenever a numerical error happens
+    while eps_high < 0:  # decrease q_high whenever a numerical error happens
         q_high *= 0.9
         accountant.history = [(noise_multiplier, q_high, steps)]
         eps_high = accountant.get_epsilon(delta=target_delta, **kwargs)
     if eps_high < target_epsilon:
-        raise ValueError(f"The given noise_multiplier {noise_multiplier} is "
-                         f"too high.")
+        raise ValueError(
+            f"The given noise_multiplier {noise_multiplier} is " f"too high."
+        )
 
     while q_low / q_high < 1 - precision:
         q = (q_low + q_high) / 2
@@ -206,12 +210,13 @@ def get_sample_rates(
             sigma_high_group = 2 * sigma_high_group
             if sigma_high_group > sigma_high:
                 sigma_high = sigma_high_group
-            accountant.history = [
-                (sigma_high_group, default_sample_rate, steps)]
+            accountant.history = [(sigma_high_group, default_sample_rate, steps)]
             eps_high = accountant.get_epsilon(delta=target_delta, **kwargs)
             if sigma_high_group > MAX_SIGMA:
-                raise ValueError(f"The privacy budget ({target_epsilon}) of"
-                                 f"group {group} is too low.")
+                raise ValueError(
+                    f"The privacy budget ({target_epsilon}) of"
+                    f"group {group} is too low."
+                )
 
     q_mean = MAX_Q
     qs = np.array([q_mean] * n_groups, dtype=np.float32)
@@ -286,8 +291,9 @@ def get_weights(
             precision=precision,
             **kwargs,
         )
-        average_noise_multiplier = sum(np.asarray(noise_multipliers)
-                                       * np.asarray(ratios))
+        average_noise_multiplier = sum(
+            np.asarray(noise_multipliers) * np.asarray(ratios)
+        )
         clip_scalars = average_noise_multiplier / np.asarray(noise_multipliers)
         max_grad_norms = default_max_grad_norm * clip_scalars
         return average_noise_multiplier, list(max_grad_norms)
