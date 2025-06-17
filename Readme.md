@@ -20,4 +20,4 @@ The following image illustrates results from our experiments:
 
 Membership Inference is working, however has not been tried on private (including iDP) models
 
-![MNIST Binary Results - FPR vs TPR (Target)](./exp_mia/mnistbinary_results/fprtpr_target.png)
+![MNIST Binary Results - FPR vs TPR (Target)](./.images/fprtpr_target.png)
