@@ -248,7 +248,7 @@ def load_model(dataset_name, model_name=None, num_classes=None):
 
     return model
 
-def save_logits(args, model, train_dl, DEVICE, path):
+def save_logits(args, model, train_dl, DEVICE, savedir, path):
     """
     Computes and saves logits for all data in the dataloader.
 
@@ -263,14 +263,14 @@ def save_logits(args, model, train_dl, DEVICE, path):
     logits_n = []
     for i in range(args.n_queries):
         logits = []
-        for x, _ in tqdm(train_dl):
+        for x, _ in train_dl:
             x = x.to(DEVICE)
             outputs = model(x)
             logits.append(outputs.detach().cpu().numpy())
         logits_n.append(np.concatenate(logits))
     logits_n = np.stack(logits_n, axis=1)
 
-    np.save(os.path.join(args.savedir, path, "logits.npy"), logits_n)
+    np.save(os.path.join(savedir, path, "logits.npy"), logits_n)
 
 def load_one(input_tuple):
     """
@@ -299,9 +299,10 @@ def load_one(input_tuple):
     np.save(os.path.join(path, "scores.npy"), logit)    
 
 
-def load_stats(args):
-    with mp.Pool(8) as p:
-        p.map(load_one, [(os.path.join(args.savedir, x), args.dataset) for x in os.listdir(args.savedir)])
+def load_stats(args, savedir):
+
+    with mp.get_context("spawn").Pool(8) as p:
+        p.map(load_one, [(os.path.join(savedir, x), args.dataset) for x in os.listdir(savedir)])
 
 
 def sweep(score, x):
@@ -313,7 +314,7 @@ def sweep(score, x):
     return fpr, tpr, auc(fpr, tpr), acc
 
 
-def load_data(args):
+def load_data(args, savedir):
     """
     Load our saved scores and then put them into a big matrix.
     """
@@ -321,9 +322,9 @@ def load_data(args):
     scores = []
     keep = []
 
-    for path in os.listdir(args.savedir):
-        scores.append(np.load(os.path.join(args.savedir, path, "scores.npy")))
-        keep.append(np.load(os.path.join(args.savedir, path, "keep.npy")))
+    for path in os.listdir(savedir):
+        scores.append(np.load(os.path.join(savedir, path, "scores.npy")))
+        keep.append(np.load(os.path.join(savedir, path, "keep.npy")))
     scores = np.array(scores)
     keep = np.array(keep)
 
@@ -443,8 +444,31 @@ def do_plot(fn, keep, scores, ntest, legend="", metric="auc", sweep_fn=sweep, **
     plt.plot(fpr, tpr, label=legend + metric_text, **plot_kwargs)
     return (acc, auc)
 
+def do_plot2(fn, keep, scores, keep_target, scores_target, ntest, legend="", metric="auc", sweep_fn=sweep, **plot_kwargs):
+    """
+    Generate the ROC curves by using ntest models as test models and the rest to train.
+    """
 
-def fig_fpr_tpr(args, keep, scores):
+    prediction, answers = fn(keep[:-ntest], scores[:-ntest], keep_target[-ntest:], scores_target[-ntest:])
+
+    fpr, tpr, auc, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
+
+    low = tpr[np.where(fpr < 0.001)[0][-1]]
+
+    print("Attack %s   AUC %.4f, Accuracy %.4f, TPR@0.1%%FPR of %.4f" % (legend, auc, acc, low))
+
+    metric_text = ""
+    if metric == "auc":
+        metric_text = "auc=%.3f" % auc
+    elif metric == "acc":
+        metric_text = "acc=%.3f" % acc
+
+    plt.plot(fpr, tpr, label=legend + metric_text, **plot_kwargs)
+    return (acc, auc)
+
+
+def fig_fpr_tpr(args, keep, scores, savedir):
+    os.makedirs(savedir, exist_ok=True)
     plt.figure(figsize=(4, 3))
 
     do_plot(generate_ours, keep, scores, 1, "Ours (online)\n", metric="auc")
@@ -466,4 +490,30 @@ def fig_fpr_tpr(args, keep, scores):
     plt.plot([0, 1], [0, 1], ls="--", color="gray")
     plt.subplots_adjust(bottom=0.18, left=0.18, top=0.96, right=0.96)
     plt.legend(fontsize=8)
-    plt.savefig(f"{args.savedir}/fprtpr.png")
+    plt.savefig(f"{savedir}/fprtpr.png")
+
+
+def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir):
+    os.makedirs(savedir, exist_ok=True)
+    plt.figure(figsize=(4, 3))
+
+    do_plot2(generate_ours, keep, scores, keep_target, scores_target, 1, "Ours (online)\n", metric="auc")
+
+    do_plot2(functools.partial(generate_ours, fix_variance=True), keep, scores, keep_target, scores_target, 1, "Ours (online, fixed variance)\n", metric="auc")
+
+    do_plot2(functools.partial(generate_ours_offline), keep, scores, keep_target, scores_target, 1, "Ours (offline)\n", metric="auc")
+
+    do_plot2(functools.partial(generate_ours_offline, fix_variance=True), keep, scores, keep_target, scores_target, 1, "Ours (offline, fixed variance)\n", metric="auc")
+
+    do_plot2(generate_global, keep, scores, keep_target, scores_target, 1, "Global threshold\n", metric="auc")
+
+    plt.semilogx()
+    plt.semilogy()
+    plt.xlim(1e-5, 1)
+    plt.ylim(1e-5, 1)
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.plot([0, 1], [0, 1], ls="--", color="gray")
+    plt.subplots_adjust(bottom=0.18, left=0.18, top=0.96, right=0.96)
+    plt.legend(fontsize=8)
+    plt.savefig(f"{savedir}/fprtpr_target.png")
