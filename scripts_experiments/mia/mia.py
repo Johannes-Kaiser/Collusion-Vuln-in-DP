@@ -6,13 +6,10 @@ import sys
 sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 import argparse
 import os
-import time
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from sklearn.metrics import roc_curve, auc
-import scipy
 from mia_utils import (
     train_loop,
     load_dataset,
@@ -25,18 +22,19 @@ from mia_utils import (
 )
 from tqdm import tqdm
 from opacus_new import PrivacyEngine
-
+import threading
+default_path = "mnist_4_1000_adamw_long_parallel"
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", default="mnistbinary", type=str)
+parser.add_argument("--dataset", default="mnist_4", type=str)
 parser.add_argument("--model", default=None, type=str)
-parser.add_argument("--lr", default=0.1, type=float)
+parser.add_argument("--lr", default=0.01, type=float)
 parser.add_argument("--epochs", default=50, type=int)
-parser.add_argument("--n_shadows", default=128, type=int)
-parser.add_argument("--n_targets", default=2, type=int)
+parser.add_argument("--n_shadows", default=1000, type=int)
+parser.add_argument("--n_targets", default=200, type=int)
 parser.add_argument("--pkeep", default=0.5, type=float)
-parser.add_argument("--savedir", default="./exp_mia/mnistbinary_shadow", type=str)
-parser.add_argument("--savedir_target", default="./exp_mia/mnistbinary_target", type=str)
-parser.add_argument("--savedir_result", default="./exp_mia/mnistbinary_results", type=str)
+parser.add_argument("--savedir", default=f"./exp_mia/{default_path}/mnistbinary_shadow", type=str)
+parser.add_argument("--savedir_target", default=f"./exp_mia/{default_path}/mnistbinary_target", type=str)
+parser.add_argument("--savedir_result", default=f"./exp_mia/{default_path}/mnistbinary_results", type=str)
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--n_queries", default=2, type=int)
 parser.add_argument("--private", action=argparse.BooleanOptionalAction, default=True, help="Enable or disable private mode (default: True)")
@@ -46,6 +44,9 @@ parser.add_argument("--individualize", default="sampling", type=str, help="Indiv
 parser.add_argument("--weights", default=None)
 parser.add_argument("--target_delta", default=1e-5, type=float)
 parser.add_argument("--max_grad_norm", default=1.0, type=float)
+parser.add_argument("--portions", type=float, nargs="+", default=[0.1, 0.9], help="List of portions (must sum to 1.0)")
+parser.add_argument("--budgets", type=float, nargs="+", default=[8.0, 50.0], help="List of epsilon values for budgets")
+parser.add_argument("--n_parallel", default=50, type=int)
 args = parser.parse_args()
 
 # DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps")
@@ -69,7 +70,8 @@ def make_private(model, train_loader, optimizer, pp_budgets, args):
                                        epochs=args.epochs,
                                        max_grad_norm=args.max_grad_norm,
                                        optimal=True,
-                                       max_alpha=10_000)
+                                       max_alpha=10_000,
+                                       numeric=True)
     else:
         private_model, private_optimizer, private_loader = privacy_engine \
             .make_private(module=model,
@@ -79,6 +81,52 @@ def make_private(model, train_loader, optimizer, pp_budgets, args):
                           max_grad_norm=args.max_grad_norm)
     return private_model, private_optimizer, private_loader, privacy_engine
         
+
+def train_shadow_worker(shadow_id, keep, size, args, DEVICE):
+    seed = np.random.randint(0, 1000000000)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    keep_indiv = np.array(keep[shadow_id], dtype=bool)
+    keep_indiv = keep_indiv.nonzero()[0]
+    train_ds = load_dataset(args.dataset, train=True)
+    test_ds = load_dataset(args.dataset, train=False)
+
+    m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
+    m = m.to(DEVICE)
+
+    keep_bool = np.full((size), False)
+    keep_bool[keep_indiv] = True
+
+    train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
+    print(len(train_ds), "samples in shadow dataset", shadow_id)
+    train_dl = DataLoader(
+        train_ds, batch_size=128, shuffle=True, num_workers=4, persistent_workers=True
+    )
+    test_dl = DataLoader(
+        test_ds, batch_size=128, shuffle=False, num_workers=4, persistent_workers=True
+    )
+
+    optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
+    criterion = torch.nn.CrossEntropyLoss()
+
+    model = train_loop(
+        model,
+        train_dl,
+        criterion,
+        optim,
+        sched,
+        DEVICE,
+        args.epochs
+    )
+
+    savedir = os.path.join(args.savedir, str(seed))
+    os.makedirs(savedir, exist_ok=True)
+    np.save(savedir + "/keep.npy", keep_bool)
+    torch.save(m.state_dict(), savedir + "/model.pt")
 
 def train_shadow_models():
     seed = np.random.randint(0, 1000000000)
@@ -96,62 +144,46 @@ def train_shadow_models():
         keep = np.random.choice(size, size=int(args.pkeep * size), replace=False)
         keep.sort()
 
-    for shadow_id in tqdm(range(args.n_shadows), desc="Shadow Models"):
-        seed = np.random.randint(0, 1000000000)
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+    threads = []
+    active_threads = []
+    n_parallel = getattr(args, "n_parallel", 1)
+
+    for shadow_id in range(args.n_shadows):
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+            stream = torch.cuda.Stream()
+            def worker_with_stream(shadow_id=shadow_id, stream=stream):
+                with torch.cuda.stream(stream):
+                    train_shadow_worker(shadow_id, keep, size, args, DEVICE)
+            t = threading.Thread(target=worker_with_stream)
+        else:
+            t = threading.Thread(target=train_shadow_worker, args=(shadow_id, keep, size, args, DEVICE))
+        threads.append(t)
 
-        keep_indiv = np.array(keep[shadow_id], dtype=bool)
-        keep_indiv = keep_indiv.nonzero()[0]
-        train_ds = load_dataset(args.dataset, train=True)
-        test_ds = load_dataset(args.dataset, train=False)
+    for t in threads:
+        t.start()
+        active_threads.append(t)
+        while len(active_threads) >= n_parallel:
+            for at in active_threads:
+                if not at.is_alive():
+                    active_threads.remove(at)
+            if len(active_threads) >= n_parallel:
+                for at in active_threads:
+                    at.join(timeout=0.1)
 
-        m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
-        m = m.to(DEVICE)
-
-        keep_bool = np.full((size), False)
-        keep_bool[keep_indiv] = True
-
-        train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
-        print(len(train_ds), "samples in shadow dataset", shadow_id)
-        train_dl = DataLoader(
-            train_ds, batch_size=128, shuffle=True, num_workers=4, persistent_workers=True
-        )
-        test_dl = DataLoader(
-            test_ds, batch_size=128, shuffle=False, num_workers=4, persistent_workers=True
-        )
-
-        optim = torch.optim.SGD(m.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
-        criterion = torch.nn.CrossEntropyLoss()
-
-
-        model = train_loop(
-            model,
-            train_dl,
-            criterion,
-            optim,
-            sched,
-            DEVICE,
-            args.epochs
-        )
-
-        savedir = os.path.join(args.savedir, str(shadow_id))
-        os.makedirs(savedir, exist_ok=True)
-        np.save(savedir + "/keep.npy", keep_bool)
-        torch.save(m.state_dict(), savedir + "/model.pt")
+    for t in active_threads:
+        t.join()
 
 def train_target_models():
+
+    seeds = []
     args.debug = True
 
     dummy_train_ds = load_dataset(args.dataset, train=True)
     size = len(dummy_train_ds)
 
     # Define portions and budgets for privacy
-    portions = [0.5, 0.5]  # Example: 50%, 30%, 20%
-    budgets = [50.0, 50.0]   # Example: epsilon values
+    portions = args.portions 
+    budgets = args.budgets  
     assert abs(sum(portions) - 1.0) < 1e-6, "Portions must sum to 1."
 
     # Assign privacy budgets to each sample in the dataset
@@ -167,12 +199,18 @@ def train_target_models():
     if start < size:
         pp_budgets[start:] = budgets[-1]
 
+    # Log indices for each unique budget
+    budget_to_index = {}
+    unique_budgets = np.unique(pp_budgets)
+    for budget in unique_budgets:
+        indices = np.where(pp_budgets == budget)[0]
+        budget_to_index[str(budget)] = indices
+
     if args.private:
         # For each target, sample a subset of the dataset such that the privacy portions are preserved
         n_keep = int(args.pkeep * size)
         keep = np.zeros((args.n_targets, size), dtype=bool)
         for target_id in range(args.n_targets):
-            # For each portion, sample the correct number of indices
             indices = []
             start = 0
             for portion in portions:
@@ -185,7 +223,6 @@ def train_target_models():
                     chosen = np.random.choice(portion_indices, size=min(n_portion_keep, len(portion_indices)), replace=False)
                     indices.extend(chosen)
                 start = end
-            # If rounding caused a mismatch, fill up to n_keep
             if len(indices) < n_keep:
                 remaining = np.setdiff1d(np.arange(size), indices)
                 extra = np.random.choice(remaining, size=n_keep - len(indices), replace=False)
@@ -194,7 +231,6 @@ def train_target_models():
             np.random.shuffle(indices)
             keep[target_id, indices] = True
     else:
-        # Use the same logic as in train_shadow_models for keep
         if args.n_targets is not None:
             keep = np.random.uniform(0, 1, size=(args.n_targets, size))
             order = keep.argsort(0)
@@ -203,8 +239,14 @@ def train_target_models():
             keep = np.random.choice(size, size=int(args.pkeep * size), replace=False)
             keep.sort()
 
-    for target_id in tqdm(range(args.n_targets), desc="Target Models"):
+    threads = []
+    seeds_out = [None] * args.n_targets
+    active_threads = []
+    n_parallel = getattr(args, "n_parallel", 1)
+
+    def worker(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out):
         seed = np.random.randint(0, 1000000000)
+        seeds_out[target_id] = seed
         torch.manual_seed(seed)
         np.random.seed(seed)
         if torch.cuda.is_available():
@@ -220,14 +262,12 @@ def train_target_models():
         train_ds = load_dataset(args.dataset, train=True)
         test_ds = load_dataset(args.dataset, train=False)
 
-        # Subset the dataset and budgets accordingly
         if args.private:
-            # Subset both dataset and budgets
             train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
             pp_budgets_subset = pp_budgets[keep_indiv]
         else:
             train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
-            pp_budgets_subset = None  # Not used
+            pp_budgets_subset = None
 
         m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
         m = m.to(DEVICE)
@@ -242,12 +282,11 @@ def train_target_models():
             test_ds, batch_size=128, shuffle=False, num_workers=4, persistent_workers=True
         )
 
-        optim = torch.optim.SGD(m.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
         criterion = torch.nn.CrossEntropyLoss()
 
         if args.private:
-            # Make model private using the subsetted budgets
             model, optim, train_dl, privacy_engine = make_private(
                 model, train_dl, optim, pp_budgets_subset, args
             )
@@ -262,11 +301,33 @@ def train_target_models():
             args.epochs
         )
 
-        savedir = os.path.join(args.savedir_target, str(target_id))
+        savedir = os.path.join(args.savedir_target, str(seed))
         os.makedirs(savedir, exist_ok=True)
         np.save(savedir + "/keep.npy", keep_bool)
         torch.save(m.state_dict(), savedir + "/model.pt")
-    
+        with open(os.path.join(savedir, "bti.npy"), "wb") as f:
+            np.save(f, budget_to_index, allow_pickle=True)
+
+    for target_id in range(args.n_targets):
+        if torch.cuda.is_available():
+            stream = torch.cuda.Stream()
+            def worker_with_stream(target_id=target_id, stream=stream):
+                with torch.cuda.stream(stream):
+                    worker(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out)
+            t = threading.Thread(target=worker_with_stream)
+        else:
+            t = threading.Thread(target=worker, args=(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out))
+        threads.append(t)
+
+    # Start threads in batches of n_parallel
+    for i in range(0, len(threads), n_parallel):
+        batch = threads[i:min(i + n_parallel, len(threads))]
+        for t in batch:
+            t.start()
+        for t in batch:
+            t.join()
+
+    return seeds_out
 
 
 def inference(savedir):
@@ -283,14 +344,36 @@ def inference(savedir):
 
 if __name__ == "__main__":
 
-    # train_shadow_models()
-    # inference(args.savedir)
-    # load_stats(args, args.savedir)
+    train_shadow_models()
+    inference(args.savedir)
+    load_stats(args, args.savedir)
     keep, scores = load_data(args, args.savedir)
-    # fig_fpr_tpr(args, keep, scores, args.savedir_result)
+    fig_fpr_tpr(args, keep, scores, args.savedir_result)
 
-    train_target_models()
+    seeds = train_target_models()
     inference(args.savedir_target)
     load_stats(args, args.savedir_target)
     keep_target, scores_target = load_data(args, args.savedir_target)
+    # Load the saved budget_to_index dictionary for each target model
+    budget_to_index_list = []
     fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, args.savedir_result)
+    for seed in seeds:
+        savedir = os.path.join(args.savedir_target, str(seed))
+        bti_path = os.path.join(savedir, "bti.npy")
+        with open(bti_path, "rb") as f:
+            budget_to_index = np.load(f, allow_pickle=True).item()
+        budget_to_index_list.append(budget_to_index)
+        # Check if all dicts in budget_to_index_list contain the same values
+        first_bti = budget_to_index_list[0]
+        for bti in budget_to_index_list[1:]:
+            assert first_bti.keys() == bti.keys(), "Target models need to have the same pp_budgets (keys mismatch)"
+            for key in first_bti.keys():
+                assert np.array_equal(first_bti[key], bti[key]), f"Target models need to have the same pp_budgets for key {key}"
+                
+    for key in first_bti.keys():
+        indices = first_bti[key]
+        keep_budget = keep[:, indices]
+        scores_budget = scores[:, indices, :]
+        keep_target_budget = keep_target[:, indices]
+        scores_target_budget = scores_target[:, indices, :]
+        fig_fpr_tpr_target(args, keep_budget, scores_budget, keep_target_budget, scores_target_budget, args.savedir_result, name=f"fprtpr_target_{key}")
