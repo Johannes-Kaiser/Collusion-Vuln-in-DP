@@ -16,3 +16,4 @@ __pycache__
 *.pdb
 __pycache__/
 *.cpython-*
+*.out

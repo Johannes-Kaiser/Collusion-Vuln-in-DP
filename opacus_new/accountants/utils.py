@@ -16,7 +16,7 @@ from typing import Optional, List
 import numpy as np
 from numpy import ndarray
 from opacus_new.accountants import create_accountant
-
+from opacus_new.accountants.get_q_numeric import get_sample_rate_estimates_rdp as get_sample_rates_rdp_numeric
 
 MAX_SIGMA = 1e6
 MIN_Q = 1e-9
@@ -298,16 +298,26 @@ def get_weights(
         max_grad_norms = default_max_grad_norm * clip_scalars
         return average_noise_multiplier, list(max_grad_norms)
     elif individualize == "sampling":
-        return get_sample_rates(
-            ratios=ratios,
-            target_epsilons=budgets,
-            target_delta=target_delta,
-            default_sample_rate=default_sample_rate,
-            steps=steps,
-            accountant=accountant,
-            precision=precision,
-            **kwargs,
-        )
+        if not kwargs.get("numeric", False):
+            return get_sample_rates(
+                ratios=ratios,
+                target_epsilons=budgets,
+                target_delta=target_delta,
+                default_sample_rate=default_sample_rate,
+                steps=steps,
+                accountant=accountant,
+                precision=precision,
+                **kwargs,
+            )
+        else:
+            return get_sample_rates_rdp_numeric(
+                ratios=ratios,
+                target_epsilons=budgets,
+                target_delta=target_delta,
+                default_sample_rate=default_sample_rate,
+                steps=steps,
+                precision=precision
+            )
     else:
         raise ValueError("individualize must be 'clipping' or 'sampling'!")
 

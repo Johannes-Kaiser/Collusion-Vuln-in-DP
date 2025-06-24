@@ -79,32 +79,34 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     """
 
     # Vision datasets
-    if name.upper() == 'MNIST':
+    if name.lower() == 'mnist':
         if transform is None:
             transform = transforms.ToTensor()
         dataset = MNIST(root=root, train=train, transform=transform, download=download)
-    elif name.upper() == 'MNISTBINARY':
+    elif name.lower() == 'mnist_4':
         if transform is None:
             transform = transforms.ToTensor()
         full_dataset = MNIST(root=root, train=True, transform=transform, download=download)
-        # Get indices for class 0 and class 1
+        # Get indices for class 0 and class 1, 2, 3
         targets = np.array(full_dataset.targets)
-        idx_0 = np.where(targets == 0)[0][:50]
-        idx_1 = np.where(targets == 1)[0][:50]
-        selected_idx = np.concatenate([idx_0, idx_1])
+        idx_0 = np.where(targets == 0)[0][:250]
+        idx_1 = np.where(targets == 1)[0][:250]
+        idx_2 = np.where(targets == 2)[0][:250]
+        idx_3 = np.where(targets == 3)[0][:250]
+        selected_idx = np.concatenate([idx_0, idx_1, idx_2, idx_3])
         # Subset the dataset
         dataset = Subset(full_dataset, selected_idx)
         # Overwrite targets attribute for compatibility
         dataset.targets = torch.tensor(targets[selected_idx])
-    elif name.upper() == 'CIFAR10':
+    elif name.lower() == 'cifar10':
         if transform is None:
             transform = transforms.ToTensor()
         dataset = CIFAR10(root=root, train=train, transform=transform, download=download)
-    elif name.upper() == 'FASHIONMNIST':
+    elif name.lower() == 'fashionmnist':
         if transform is None:
             transform = transforms.ToTensor()
         dataset = FashionMNIST(root=root, train=train, transform=transform, download=download)
-    elif name.upper() == 'SVHN':
+    elif name.lower() == 'svhn':
         if transform is None:
             transform = transforms.ToTensor()
         split = 'train' if train else 'test'
@@ -158,14 +160,14 @@ def load_model(dataset_name, model_name=None, num_classes=None):
             num_classes = 3
         elif dataset_name == 'wine':
             num_classes = 3
-        elif dataset_name in ['breast_cancer', 'mnistbinary']:
-            num_classes = 2
+        elif dataset_name in ['breast_cancer', 'mnist_4']:
+            num_classes = 4 #2
         else:
             raise ValueError(f"Unknown dataset: {dataset_name}")
 
     # Default model selection
     if model_name is None:
-        if dataset_name in ['mnist', 'fashionmnist', 'mnistbinary']:
+        if dataset_name in ['mnist', 'fashionmnist', 'mnist_4']:
             model_name = 'mlp'
         elif dataset_name in ['cifar10', 'svhn']:
             model_name = 'simple_cnn'
@@ -177,7 +179,7 @@ def load_model(dataset_name, model_name=None, num_classes=None):
     # Model definitions
     if model_name.lower() == 'mlp':
         # For tabular or flattened image data
-        if dataset_name in ['mnist', 'fashionmnist', 'mnistbinary']:
+        if dataset_name in ['mnist', 'fashionmnist', 'mnist_4']:
             input_dim = 28 * 28
         elif dataset_name == 'iris':
             input_dim = 4
@@ -493,7 +495,7 @@ def fig_fpr_tpr(args, keep, scores, savedir):
     plt.savefig(f"{savedir}/fprtpr.png")
 
 
-def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir):
+def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir, name="fprtpr_target"):
     os.makedirs(savedir, exist_ok=True)
     plt.figure(figsize=(4, 3))
 
@@ -516,4 +518,4 @@ def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir):
     plt.plot([0, 1], [0, 1], ls="--", color="gray")
     plt.subplots_adjust(bottom=0.18, left=0.18, top=0.96, right=0.96)
     plt.legend(fontsize=8)
-    plt.savefig(f"{savedir}/fprtpr_target.png")
+    plt.savefig(f"{savedir}/{name}.png")

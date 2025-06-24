@@ -1,5 +1,5 @@
 import numpy as np
-from opacus_new.accountants.utils import get_sample_rates as get_sample_rates_boenisch
+# from opacus_new.accountants.utils import get_sample_rates as get_sample_rates_boenisch
 from dp_accounting.rdp.rdp_privacy_accountant import (
     _compute_rdp_poisson_subsampled_gaussian,
     compute_epsilon,
@@ -152,17 +152,17 @@ if __name__ == "__main__":
     time_rdp = tock - tick
     print(f"RDP: sigma_sample = {sigma_sample_rdp:.4f}, qs = {qs_rdp}")
     print(f"RDP took {time_rdp:.4f}s")
-    tick = time()
-    sigma_sample_boenisch, qs_boenisch = get_sample_rates_boenisch(
-        ratios,
-        epsilons,
-        target_delta,
-        default_batch_size / n_data,
-        epochs * n_data // default_batch_size,
-    )
-    tock = time()
-    time_boenisch = tock - tick
-    print(
-        f"Boenisch: sigma_sample = {sigma_sample_boenisch:.4f}, qs = {np.array(qs_boenisch)}"
-    )
-    print(f"Boenisch took {time_boenisch:.4f}s")
+    # tick = time()
+    # sigma_sample_boenisch, qs_boenisch = get_sample_rates_boenisch(
+    #     ratios,
+    #     epsilons,
+    #     target_delta,
+    #     default_batch_size / n_data,
+    #     epochs * n_data // default_batch_size,
+    # )
+    # tock = time()
+    # time_boenisch = tock - tick
+    # print(
+    #     f"Boenisch: sigma_sample = {sigma_sample_boenisch:.4f}, qs = {np.array(qs_boenisch)}"
+    # )
+    # print(f"Boenisch took {time_boenisch:.4f}s")
