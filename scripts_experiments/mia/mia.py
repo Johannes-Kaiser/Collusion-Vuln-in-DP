@@ -23,14 +23,15 @@ from mia_utils import (
 from tqdm import tqdm
 from opacus_new import PrivacyEngine
 import threading
+from queue import Queue
 default_path = "mnist_4_1000_adamw_long_parallel"
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", default="mnist_4", type=str)
 parser.add_argument("--model", default=None, type=str)
 parser.add_argument("--lr", default=0.01, type=float)
 parser.add_argument("--epochs", default=50, type=int)
-parser.add_argument("--n_shadows", default=1000, type=int)
-parser.add_argument("--n_targets", default=200, type=int)
+parser.add_argument("--n_shadows", default=4096, type=int)
+parser.add_argument("--n_targets", default=512, type=int)
 parser.add_argument("--pkeep", default=0.5, type=float)
 parser.add_argument("--savedir", default=f"./exp_mia/{default_path}/mnistbinary_shadow", type=str)
 parser.add_argument("--savedir_target", default=f"./exp_mia/{default_path}/mnistbinary_target", type=str)
@@ -46,9 +47,13 @@ parser.add_argument("--target_delta", default=1e-5, type=float)
 parser.add_argument("--max_grad_norm", default=1.0, type=float)
 parser.add_argument("--portions", type=float, nargs="+", default=[0.1, 0.9], help="List of portions (must sum to 1.0)")
 parser.add_argument("--budgets", type=float, nargs="+", default=[8.0, 50.0], help="List of epsilon values for budgets")
-parser.add_argument("--n_parallel", default=50, type=int)
+parser.add_argument("--n_parallel", default=25, type=int)
+parser.add_argument("--disable_inner", action=argparse.BooleanOptionalAction, default=False, help="Disable inner parallelism (default: False)")
 args = parser.parse_args()
 
+if args.n_parallel > 1:
+    args.disable_inner = True
+# args.disable_inner = False
 # DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("mps")
 DEVICE = torch.device("cpu")  # Force CPU for now
 
@@ -101,7 +106,7 @@ def train_shadow_worker(shadow_id, keep, size, args, DEVICE):
     keep_bool[keep_indiv] = True
 
     train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
-    print(len(train_ds), "samples in shadow dataset", shadow_id)
+    # print(len(train_ds), "samples in shadow dataset", shadow_id)
     train_dl = DataLoader(
         train_ds, batch_size=128, shuffle=True, num_workers=4, persistent_workers=True
     )
@@ -114,6 +119,7 @@ def train_shadow_worker(shadow_id, keep, size, args, DEVICE):
     criterion = torch.nn.CrossEntropyLoss()
 
     model = train_loop(
+        args,
         model,
         train_dl,
         criterion,
@@ -147,7 +153,7 @@ def train_shadow_models():
     threads = []
     active_threads = []
     n_parallel = getattr(args, "n_parallel", 1)
-
+    
     for shadow_id in range(args.n_shadows):
         if torch.cuda.is_available():
             stream = torch.cuda.Stream()
@@ -159,19 +165,28 @@ def train_shadow_models():
             t = threading.Thread(target=train_shadow_worker, args=(shadow_id, keep, size, args, DEVICE))
         threads.append(t)
 
-    for t in threads:
-        t.start()
-        active_threads.append(t)
-        while len(active_threads) >= n_parallel:
-            for at in active_threads:
-                if not at.is_alive():
-                    active_threads.remove(at)
-            if len(active_threads) >= n_parallel:
-                for at in active_threads:
-                    at.join(timeout=0.1)
-
-    for t in active_threads:
-        t.join()
+    total_jobs = len(threads)
+    active_threads = []
+    idx = 0
+    with tqdm(total=total_jobs) as pbar:
+        while idx < total_jobs or active_threads:
+            # Start new threads if we have capacity
+            while len(active_threads) < n_parallel and idx < total_jobs:
+                t = threads[idx]
+                t.start()
+                active_threads.append(t)
+                idx += 1
+            # Remove finished threads
+            still_active = []
+            for t in active_threads:
+                if t.is_alive():
+                    still_active.append(t)
+                else:
+                    pbar.update(1)
+            active_threads = still_active
+            if active_threads:
+                # Avoid busy waiting
+                active_threads[0].join(timeout=0.1)
 
 def train_target_models():
 
@@ -292,6 +307,7 @@ def train_target_models():
             )
 
         model = train_loop(
+            args,
             model,
             train_dl,
             criterion,
@@ -319,13 +335,28 @@ def train_target_models():
             t = threading.Thread(target=worker, args=(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out))
         threads.append(t)
 
-    # Start threads in batches of n_parallel
-    for i in range(0, len(threads), n_parallel):
-        batch = threads[i:min(i + n_parallel, len(threads))]
-        for t in batch:
-            t.start()
-        for t in batch:
-            t.join()
+    total_jobs = len(threads)
+    active_threads = []
+    idx = 0
+    with tqdm(total=total_jobs) as pbar:
+        while idx < total_jobs or active_threads:
+            # Start new threads if we have capacity
+            while len(active_threads) < n_parallel and idx < total_jobs:
+                t = threads[idx]
+                t.start()
+                active_threads.append(t)
+                idx += 1
+            # Remove finished threads
+            still_active = []
+            for t in active_threads:
+                if t.is_alive():
+                    still_active.append(t)
+                else:
+                    pbar.update(1)
+            active_threads = still_active
+            if active_threads:
+                # Avoid busy waiting
+                active_threads[0].join(timeout=0.1)
 
     return seeds_out
 

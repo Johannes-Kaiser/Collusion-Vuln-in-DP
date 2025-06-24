@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 from torch.utils.data import Subset
 
-def train_loop(model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
+def train_loop(args, model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
     """
     Generic training loop for PyTorch models, compatible with Opacus-privatized models.
 
@@ -44,7 +44,7 @@ def train_loop(model, train_loader, criterion, optimizer, sched, device, epochs,
     model.train()
     for epoch in range(epochs):
         running_loss = 0.0
-        with tqdm(train_loader, desc=f"Epoch [{epoch+1}/{epochs}]", leave=False) as pbar:
+        with tqdm(train_loader, desc=f"Epoch [{epoch+1}/{epochs}]", leave=False, disable=args.disable_inner) as pbar:
             for batch_idx, (inputs, targets) in enumerate(pbar):
                 inputs, targets = inputs.to(device), targets.to(device)
                 optimizer.zero_grad()
@@ -57,7 +57,8 @@ def train_loop(model, train_loader, criterion, optimizer, sched, device, epochs,
         if sched is not None:
             sched.step()
         avg_loss = running_loss / len(train_loader)
-        tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.8f}")
+        if not args.disable_inner:
+            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.8f}")
     if privacy_engine is not None:
         epsilon = privacy_engine.get_epsilon(delta=1e-5)
         print(f"(DP) ε = {epsilon:.2f}")
