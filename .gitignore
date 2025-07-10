@@ -17,3 +17,9 @@ __pycache__
 __pycache__/
 *.cpython-*
 *.out
+*.err
+*.npy
+*.pt
+*.json
+*.png
+*.svg

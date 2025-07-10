@@ -94,6 +94,7 @@ def get_sample_rate_estimates_rdp(
     steps: int,
     precision: float = 0.001,
 ):
+    # print("Numeric")
     ratios = np.asarray(ratios, dtype=np.float32)
     n_groups = len(target_epsilons)
     sigma_low, sigma_high = 1e-5, 1e-3

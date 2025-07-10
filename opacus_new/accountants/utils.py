@@ -282,6 +282,7 @@ def get_weights(
     budgets = list(np.sort(np.unique(pp_budgets)))
     ratios = [sum(pp_budgets == b) / len(pp_budgets) for b in budgets]
     if individualize == "clipping":
+        kwargs.pop("numeric", None)
         noise_multipliers = get_noise_multipliers(
             target_epsilons=budgets,
             target_delta=target_delta,

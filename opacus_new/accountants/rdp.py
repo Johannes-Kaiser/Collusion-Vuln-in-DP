@@ -47,7 +47,8 @@ class RDPAccountant(IAccountant):
             self.history.append((noise_multiplier, sample_rate, 1))
 
     def get_privacy_spent(
-        self, *, delta: float, alphas: Optional[List[Union[float, int]]] = None
+        self, *, delta: float, alphas: Optional[List[Union[float, int]]] = None,
+            **kwargs
     ) -> Tuple[float, float]:
         if not self.history:
             return 0, 0
@@ -73,7 +74,9 @@ class RDPAccountant(IAccountant):
     def get_privacy_spent_optimal(
             self, delta: float, min_alpha: Optional[float] = None,
             max_alpha: Optional[float] = None,
-            from_prev_alpha: bool = False) -> Tuple[float, float]:
+            from_prev_alpha: bool = False,
+            **kwargs,
+            ) -> Tuple[float, float]:
         """
         Args:
             delta: target delta
