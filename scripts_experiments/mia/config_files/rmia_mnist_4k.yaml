@@ -35,7 +35,7 @@ audit: # Configurations for auditing
   augmentation: augmented # Indicate whether to use augmentation for the query points
   nb_augmentation: 1 # number of queries used for the attack (should have been computed beforehand)
   top_k: -1 # number of population z to use for the relative attack, can be -1 (all population is used) or anywhere between 1 and around 25K (depends on each dataset's size) 
-  signal: loss_logit_rescaled # name of the signal used to perform the relative attack. Can be the parameter for other attacks
+  signal: sm_taylor_softmax_relative # name of the signal used to perform the relative attack. Can be the parameter for other attacks
   temperature: 2.0 # float: temperature applied to logits when computing signals
   gamma: 2.0 # float: gamma threshold for LRT(x,z,theta)
   proportiontocut: 0.2 # float: which proportion of models left and right to remove to compute the trimmed mean of p(x) or p(z) 
