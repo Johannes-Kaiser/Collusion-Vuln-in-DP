@@ -11,20 +11,17 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from mia_utils import (
-    train_loop,
-    load_dataset,
-    load_model,
-    save_logits,
-    load_stats,
-    load_data,
+from utils.utils_general import load_dataset, load_model, save_logits, train_loop
+from utils.utils_mia import (
     fig_fpr_tpr,
     fig_fpr_tpr_target,
-    indiv_scores,
-    plot_and_save_samplewise_auc,
+    indiv_scores,     
     generate_biregular_binary_matrix_random,
+    load_stats,
+    load_data, 
+    plot_and_save_samplewise_auc,
     plot_and_save_integrals,
-    load_pg_lists
+    load_pg_lists    
 )
 from tqdm import tqdm
 from opacus_new import PrivacyEngine
