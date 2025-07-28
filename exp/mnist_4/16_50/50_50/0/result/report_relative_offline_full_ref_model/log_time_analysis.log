@@ -1,0 +1,12 @@
+2025-07-25 11:17:28,721 INFO     Loading from target dir 19 target models and reference dir 19 reference models...
+2025-07-25 11:17:28,804 INFO     Prepare the signals costs 0.08383 seconds
+2025-07-25 11:18:18,606 INFO     Average attack results:
+2025-07-25 11:18:18,606 INFO     AUC 0.4896, Accuracy 0.5087
+2025-07-25 11:18:18,607 INFO     TPR@1%FPR of 0.0103, TPR@0.1%FPR of 0.0011, TPR@0.01%FPR of 0.0002, TPR@0.001%FPR of 0.0002, TPR@0%FPR of 0.0002
+2025-07-25 11:18:18,607 INFO     Run the attack for the all steps costs 49.88661 seconds
+2025-07-25 11:18:18,613 INFO     Loading from target dir 20 target models and reference dir 20 reference models...
+2025-07-25 11:18:18,632 INFO     Prepare the signals costs 0.02029 seconds
+2025-07-25 11:19:11,325 INFO     Average attack results:
+2025-07-25 11:19:11,325 INFO     AUC 0.4905, Accuracy 0.5085
+2025-07-25 11:19:11,325 INFO     TPR@1%FPR of 0.0094, TPR@0.1%FPR of 0.0009, TPR@0.01%FPR of 0.0002, TPR@0.001%FPR of 0.0002, TPR@0%FPR of 0.0002
+2025-07-25 11:19:11,325 INFO     Run the attack for the all steps costs 52.71306 seconds
