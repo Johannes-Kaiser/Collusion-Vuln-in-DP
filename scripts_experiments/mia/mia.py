@@ -4,17 +4,15 @@
 # author: Chenxiang Zhang (orientino)
 import sys
 sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
+
 import argparse
 import os
 import time
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from utils.utils_general import load_dataset, load_model, save_logits, train_loop
 from utils.utils_mia import (
-    fig_fpr_tpr,
-    fig_fpr_tpr_target,
     indiv_scores,     
     generate_biregular_binary_matrix_random,
     load_stats,
@@ -28,30 +26,61 @@ from opacus_new import PrivacyEngine
 import threading
 from queue import Queue
 import json
+# --- YAML support ---
+import yaml
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", default="mnist_4", type=str)
-parser.add_argument("--model", default=None, type=str)
-parser.add_argument("--lr", default=0.01, type=float)
-parser.add_argument("--epochs", default=15, type=int)
-parser.add_argument("--n_shadows", default=5, type=int)
-parser.add_argument("--n_targets", default=3, type=int)
-parser.add_argument("--pkeep", default=0.5, type=float)
-parser.add_argument("--debug", action="store_true")
-parser.add_argument("--n_queries", default=2, type=int)
-parser.add_argument("--private", action=argparse.BooleanOptionalAction, default=True, help="Enable or disable private mode (default: True)")
-parser.add_argument("--adapt_weights_to_budgets", action=argparse.BooleanOptionalAction, default=True, help="Adapt weights from budgets (default: True)")
-parser.add_argument("--accountant", default="rdp", type=str, help="Type of privacy accountant (default: RDP)")
-parser.add_argument("--individualize", default="sampling", type=str, help="Individualization method (default: sampling)")
-parser.add_argument("--weights", default=None)
-parser.add_argument("--target_delta", default=1e-10, type=float)
-parser.add_argument("--max_grad_norm", default=1.0, type=float)
-parser.add_argument("--portions", type=float, nargs="+", default=[0.1, 0.9], help="List of portions (must sum to 1.0)")
-parser.add_argument("--budgets", type=float, nargs="+", default=[16.0, 50.0], help="List of epsilon values for budgets")
-parser.add_argument("--n_parallel", default=8, type=int)
-parser.add_argument("--disable_inner", action=argparse.BooleanOptionalAction, default=False, help="Disable inner parallelism (default: False)")
-parser.add_argument("--seed", default=42, type=int, help="Random seed (default: 42)")
-args = parser.parse_args()
+
+# --- YAML experiment config support ---
+def load_yaml_args(yaml_path):
+    with open(yaml_path, 'r') as f:
+        config = yaml.safe_load(f)
+    # Convert None strings to None
+    for k, v in config.items():
+        if isinstance(v, str) and v.lower() == 'null':
+            config[k] = None
+    return config
+
+def parse_args_with_yaml():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_yaml', type=str, required=True, help='YAML file with experiment parameters', default='./mia/exp_yaml/mnist_4.yaml')
+    # Do not set defaults for any other arguments
+    parser.add_argument("--dataset", type=str)
+    parser.add_argument("--model", type=str)
+    parser.add_argument("--lr", type=float)
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--n_shadows", type=int)
+    parser.add_argument("--n_targets", type=int)
+    parser.add_argument("--pkeep", type=float)
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--n_queries", type=int)
+    parser.add_argument("--private", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--adapt_weights_to_budgets", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--accountant", type=str)
+    parser.add_argument("--individualize", type=str)
+    parser.add_argument("--weights")
+    parser.add_argument("--target_delta", type=float)
+    parser.add_argument("--max_grad_norm", type=float)
+    parser.add_argument("--portions", type=float, nargs="+")
+    parser.add_argument("--budgets", type=float, nargs="+")
+    parser.add_argument("--n_parallel", type=int)
+    parser.add_argument("--disable_inner", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--seed", type=int)
+    args, unknown = parser.parse_known_args()
+
+    # Load config from YAML
+    config = load_yaml_args(args.exp_yaml)
+    # Overwrite config with any command-line arguments that are not None
+    for k, v in vars(args).items():
+        if k == "exp_yaml":
+            continue
+        if v is not None:
+            if k in config and config[k] != v:
+                print(f"Overwriting config value for '{k}': {config[k]} -> {v}")
+            config[k] = v
+    # Convert config dict to Namespace
+    return argparse.Namespace(**config)
+
+args = parse_args_with_yaml()
 
 # Construct default_path from dataset, budgets, and portions
 def format_list(lst):
@@ -425,16 +454,9 @@ def inference(savedir):
 
 if __name__ == "__main__":
 
-    # train_shadow_models()
-    # inference(args.savedir)
-    # load_stats(args, args.savedir)
     samplewise_auc = {}
     samplewise_auc_R = {}
     integrals_all = {}
-    # keep, scores = load_data(args, args.savedir)
-    # indiv_scores_val, x_vals, samplewise_R = indiv_scores(keep, scores)
-    # samplewise_auc["infty"] = indiv_scores_val
-    # fig_fpr_tpr(args, keep, scores, args.savedir_result)
 
     _ = train_target_models()
     seeds = [folder for folder in os.listdir(args.savedir_target) if os.path.isdir(os.path.join(args.savedir_target, folder))]

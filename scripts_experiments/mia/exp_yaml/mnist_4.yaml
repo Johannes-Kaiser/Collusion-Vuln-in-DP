@@ -1,0 +1,28 @@
+# Experiment configuration for MIA
+# All parameters correspond to argparse arguments in mia.py
+
+dataset: mnist_4
+model: null
+lr: 0.01
+epochs: 15
+n_shadows: 5
+n_targets: 3
+pkeep: 0.5
+debug: false
+n_queries: 2
+private: true
+adapt_weights_to_budgets: true
+accountant: rdp
+individualize: sampling
+weights: null
+target_delta: 1e-10
+max_grad_norm: 1.0
+portions:
+  - 0.1
+  - 0.9
+budgets:
+  - 16.0
+  - 50.0
+n_parallel: 8
+disable_inner: false
+seed: 42

@@ -34,7 +34,7 @@ import numpy as np
 import random
 import time
 
-def train_loop(args, model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
+def train_loop(params, model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
     """
     Generic training loop for PyTorch models, compatible with Opacus-privatized models.
 
@@ -49,9 +49,10 @@ def train_loop(args, model, train_loader, criterion, optimizer, sched, device, e
     """
     model.to(device)
     model.train()
+    disable_inner = params.disable_inner if hasattr(params, 'disable_inner') else params.get('disable_inner', False)
     for epoch in range(epochs):
         running_loss = 0.0
-        with tqdm(train_loader, desc=f"Epoch [{epoch+1}/{epochs}]", leave=False, disable=args.disable_inner) as pbar:
+        with tqdm(train_loader, desc=f"Epoch [{epoch+1}/{epochs}]", leave=False, disable=disable_inner) as pbar:
             for batch_idx, (inputs, targets) in enumerate(pbar):
                 inputs, targets = inputs.to(device), targets.to(device)
                 optimizer.zero_grad()
@@ -64,7 +65,7 @@ def train_loop(args, model, train_loader, criterion, optimizer, sched, device, e
         if sched is not None:
             sched.step()
         avg_loss = running_loss / len(train_loader)
-        if not args.disable_inner:
+        if not disable_inner:
             tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.8f}")
     if privacy_engine is not None:
         epsilon = privacy_engine.get_epsilon(delta=1e-5)

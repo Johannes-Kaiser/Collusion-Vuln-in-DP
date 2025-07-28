@@ -43,10 +43,10 @@ def load_one(input_tuple):
     np.save(os.path.join(path, "scores.npy"), logit)    
 
 
-def load_stats(args, savedir):
-
+def load_stats(params, savedir):
+    dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
     with mp.get_context("spawn").Pool(8) as p:
-        p.map(load_one, [(os.path.join(savedir, x), args.dataset) for x in os.listdir(savedir)])
+        p.map(load_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
 
 
 def sweep(score, x):
@@ -58,7 +58,7 @@ def sweep(score, x):
     return fpr, tpr, auc(fpr, tpr), acc
 
 
-def load_data(args, savedir):
+def load_data(params, savedir):
     """
     Load our saved scores and then put them into a big matrix.
     """
