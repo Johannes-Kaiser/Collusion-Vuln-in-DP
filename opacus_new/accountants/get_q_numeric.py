@@ -74,16 +74,16 @@ def get_sample_rate_estimate_rdp(
 
 def _q_worker(args: tuple[int, float, float, float, int]):
     idx, eps, sigma, delta, steps = args
-    try:
-        q = get_sample_rate_estimate_rdp(
-            target_epsilon=eps,
-            target_delta=delta,
-            noise_multiplier=sigma,
-            steps=steps,
-        )
-        return idx, q
-    except ValueError:
-        return idx, None
+    q = get_sample_rate_estimate_rdp(
+        target_epsilon=eps,
+        target_delta=delta,
+        noise_multiplier=sigma,
+        steps=steps,
+    )
+    return idx, q
+    # except ValueError:
+    #     print("Error in rate compuation")
+    #     return idx, None
 
 
 def get_sample_rate_estimates_rdp(

@@ -77,9 +77,9 @@ def load_data(params, savedir):
 
 def generate_ours(keep, scores, check_keep, check_scores, in_size=100000, out_size=100000, fix_variance=False):
     """
-    Fit a two predictive models using keep and scores in order to predict
-    if the examples in check_scores were training data or not, using the
-    ground truth answer from check_keep.
+    Fit two predictive models using keep and scores to predict
+    if the examples in check_scores were training data or not, using
+    the ground truth answer from check_keep.
     """
     dat_in = []
     dat_out = []
@@ -119,9 +119,9 @@ def generate_ours(keep, scores, check_keep, check_scores, in_size=100000, out_si
 
 def generate_ours_offline(keep, scores, check_keep, check_scores, in_size=100000, out_size=100000, fix_variance=False):
     """
-    Fit a single predictive model using keep and scores in order to predict
-    if the examples in check_scores were training data or not, using the
-    ground truth answer from check_keep.
+    Fit a single predictive model using keep and scores to predict
+    if the examples in check_scores were training data or not, using
+    the ground truth answer from check_keep.
     """
     dat_in = []
     dat_out = []
@@ -131,7 +131,6 @@ def generate_ours_offline(keep, scores, check_keep, check_scores, in_size=100000
         dat_out.append(scores[~keep[:, j], j, :])
 
     out_size = min(min(map(len, dat_out)), out_size)
-
     dat_out = np.array([x[:out_size] for x in dat_out])
 
     mean_out = np.median(dat_out, 1)
@@ -145,7 +144,6 @@ def generate_ours_offline(keep, scores, check_keep, check_scores, in_size=100000
     answers = []
     for ans, sc in zip(check_keep, check_scores):
         score = scipy.stats.norm.logpdf(sc, mean_out, std_out + 1e-30)
-
         prediction.extend(score.mean(1))
         answers.extend(ans)
     return prediction, answers
@@ -162,68 +160,55 @@ def generate_global(keep, scores, check_keep, check_scores):
     for ans, sc in zip(check_keep, check_scores):
         prediction.extend(-sc.mean(1))
         answers.extend(ans)
-
     return prediction, answers
 
 
-def do_plot(fn, keep, scores, ntest, legend="", metric="auc", sweep_fn=sweep, **plot_kwargs):
+def plot_roc_curve(fpr, tpr, auc, acc, legend, metric, **plot_kwargs):
     """
-    Generate the ROC curves by using ntest models as test models and the rest to train.
+    Plot a single ROC curve with annotation.
     """
+    if metric == "auc":
+        metric_text = f"auc={auc:.3f}"
+    elif metric == "acc":
+        metric_text = f"acc={acc:.3f}"
+    else:
+        metric_text = ""
+    plt.plot(fpr, tpr, label=f"{legend}{metric_text}", **plot_kwargs)
 
+
+def run_attack_and_get_roc(fn, keep, scores, ntest, sweep_fn):
+    """
+    Run the attack function and compute ROC curve, AUC, ACC.
+    """
     prediction, answers = fn(keep[:-ntest], scores[:-ntest], keep[-ntest:], scores[-ntest:])
-
-    fpr, tpr, auc, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
-
-    low = tpr[np.where(fpr < 0.001)[0][-1]]
-
-    print("Attack %s   AUC %.4f, Accuracy %.4f, TPR@0.1%%FPR of %.4f" % (legend, auc, acc, low))
-
-    metric_text = ""
-    if metric == "auc":
-        metric_text = "auc=%.3f" % auc
-    elif metric == "acc":
-        metric_text = "acc=%.3f" % acc
-
-    plt.plot(fpr, tpr, label=legend + metric_text, **plot_kwargs)
-    return (acc, auc)
-
-def do_plot2(fn, keep, scores, keep_target, scores_target, ntest, legend="", metric="auc", sweep_fn=sweep, **plot_kwargs):
-    """
-    Generate the ROC curves by using ntest models as test models and the rest to train.
-    """
-
-    prediction, answers = fn(keep[:-ntest], scores[:-ntest], keep_target[-ntest:], scores_target[-ntest:])
-
-    fpr, tpr, auc, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
-
-    low = tpr[np.where(fpr < 0.001)[0][-1]]
-
-    print("Attack %s   AUC %.4f, Accuracy %.4f, TPR@0.1%%FPR of %.4f" % (legend, auc, acc, low))
-
-    metric_text = ""
-    if metric == "auc":
-        metric_text = "auc=%.3f" % auc
-    elif metric == "acc":
-        metric_text = "acc=%.3f" % acc
-
-    plt.plot(fpr, tpr, label=legend + metric_text, **plot_kwargs)
-    return (acc, auc)
+    fpr, tpr, auc_val, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
+    # Find TPR at FPR < 0.001
+    try:
+        low = tpr[np.where(fpr < 0.001)[0][-1]]
+    except IndexError:
+        low = 0.0
+    return fpr, tpr, auc_val, acc, low
 
 
 def fig_fpr_tpr(args, keep, scores, savedir):
+    """
+    Plot ROC curves for various attacks and save the figure.
+    """
     os.makedirs(savedir, exist_ok=True)
     plt.figure(figsize=(4, 3))
 
-    do_plot(generate_ours, keep, scores, 1, "Ours (online)\n", metric="auc")
+    attacks = [
+        (generate_ours, "Ours (online)\n", {}),
+        (functools.partial(generate_ours, fix_variance=True), "Ours (online, fixed variance)\n", {}),
+        (functools.partial(generate_ours_offline), "Ours (offline)\n", {}),
+        (functools.partial(generate_ours_offline, fix_variance=True), "Ours (offline, fixed variance)\n", {}),
+        (generate_global, "Global threshold\n", {}),
+    ]
 
-    do_plot(functools.partial(generate_ours, fix_variance=True), keep, scores, 1, "Ours (online, fixed variance)\n", metric="auc")
-
-    do_plot(functools.partial(generate_ours_offline), keep, scores, 1, "Ours (offline)\n", metric="auc")
-
-    do_plot(functools.partial(generate_ours_offline, fix_variance=True), keep, scores, 1, "Ours (offline, fixed variance)\n", metric="auc")
-
-    do_plot(generate_global, keep, scores, 1, "Global threshold\n", metric="auc")
+    for fn, legend, kwargs in attacks:
+        fpr, tpr, auc_val, acc, low = run_attack_and_get_roc(fn, keep, scores, 1, sweep)
+        print(f"Attack {legend}   AUC {auc_val:.4f}, Accuracy {acc:.4f}, TPR@0.1%%FPR of {low:.4f}")
+        plot_roc_curve(fpr, tpr, auc_val, acc, legend, "auc", **kwargs)
 
     plt.semilogx()
     plt.semilogy()
@@ -235,21 +220,41 @@ def fig_fpr_tpr(args, keep, scores, savedir):
     plt.subplots_adjust(bottom=0.18, left=0.18, top=0.96, right=0.96)
     plt.legend(fontsize=8)
     plt.savefig(f"{savedir}/fprtpr.png")
+    plt.close()
+
+
+def run_attack_and_get_roc_target(fn, keep, scores, keep_target, scores_target, ntest, sweep_fn):
+    """
+    Run the attack function and compute ROC curve, AUC, ACC for target data.
+    """
+    prediction, answers = fn(keep[:-ntest], scores[:-ntest], keep_target[-ntest:], scores_target[-ntest:])
+    fpr, tpr, auc_val, acc = sweep_fn(np.array(prediction), np.array(answers, dtype=bool))
+    try:
+        low = tpr[np.where(fpr < 0.001)[0][-1]]
+    except IndexError:
+        low = 0.0
+    return fpr, tpr, auc_val, acc, low
 
 
 def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir, name="fprtpr_target"):
+    """
+    Plot ROC curves for various attacks on target data and save the figure.
+    """
     os.makedirs(savedir, exist_ok=True)
     plt.figure(figsize=(4, 3))
 
-    do_plot2(generate_ours, keep, scores, keep_target, scores_target, 1, "Ours (online)\n", metric="auc")
+    attacks = [
+        (generate_ours, "Ours (online)\n", {}),
+        (functools.partial(generate_ours, fix_variance=True), "Ours (online, fixed variance)\n", {}),
+        (functools.partial(generate_ours_offline), "Ours (offline)\n", {}),
+        (functools.partial(generate_ours_offline, fix_variance=True), "Ours (offline, fixed variance)\n", {}),
+        (generate_global, "Global threshold\n", {}),
+    ]
 
-    do_plot2(functools.partial(generate_ours, fix_variance=True), keep, scores, keep_target, scores_target, 1, "Ours (online, fixed variance)\n", metric="auc")
-
-    do_plot2(functools.partial(generate_ours_offline), keep, scores, keep_target, scores_target, 1, "Ours (offline)\n", metric="auc")
-
-    do_plot2(functools.partial(generate_ours_offline, fix_variance=True), keep, scores, keep_target, scores_target, 1, "Ours (offline, fixed variance)\n", metric="auc")
-
-    do_plot2(generate_global, keep, scores, keep_target, scores_target, 1, "Global threshold\n", metric="auc")
+    for fn, legend, kwargs in attacks:
+        fpr, tpr, auc_val, acc, low = run_attack_and_get_roc_target(fn, keep, scores, keep_target, scores_target, 1, sweep)
+        print(f"Attack {legend}   AUC {auc_val:.4f}, Accuracy {acc:.4f}, TPR@0.1%%FPR of {low:.4f}")
+        plot_roc_curve(fpr, tpr, auc_val, acc, legend, "auc", **kwargs)
 
     plt.semilogx()
     plt.semilogy()
@@ -261,6 +266,7 @@ def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir, 
     plt.subplots_adjust(bottom=0.18, left=0.18, top=0.96, right=0.96)
     plt.legend(fontsize=8)
     plt.savefig(f"{savedir}/{name}.png")
+    plt.close()
 
 def indiv_scores(keep, scores):
     """
@@ -299,9 +305,6 @@ def indiv_scores(keep, scores):
         denom = np.sqrt(sigma2_x + sigma2_xp)
         auc_j = norm.cdf((mu_x - mu_xp) / (denom + 1e-30))
         auc_scores.append(auc_j)
-        # auc_scores is a list of per-record AUCs (length = scores.shape[1])
-        # Compute R(x) = Φ(a + b * Φ^{-1}(x)) for 100 steps between 0 and 1, samplewise
-        # a = ||μ1 - μ0|| / σ1, b = σ0 / σ1
     advs = []
     TPRs = []
     FPR = np.linspace(1e-6, 1 - 1e-6, 100000)
@@ -330,31 +333,12 @@ def indiv_scores(keep, scores):
         integrals.append(integrals_row)
         adv = np.max(np.array(R) - np.array(FPR))
         advs.append(adv)
-    # Example: Compute the integral of R(x) from 0 to high_alpha using sympy for each sample
-    # high_alpha = 0.01  # or any value you want to integrate up to
-    # integrals_sympy = []
-    # for j in range(scores.shape[1]):
-    #     mu1 = mean_in[j]
-    #     mu0 = mean_out[j]
-    #     sigma1 = std_in[j]
-    #     sigma0 = std_out[j]
-    #     a = np.abs(mu1 - mu0) / (sigma1 + 1e-30)
-    #     b = sigma0 / (sigma1 + 1e-30)
-    #     x = sp.symbols('x')
-    #     Z = Normal('Z', 0, 1)
-    #     phi_inv = quantile(Z)(x)
-    #     R_x = cdf(Z)(a + b * phi_inv)
-    #     integral = sp.integrate(R_x, (x, 0, high_alpha))
-    #     integrals_sympy.append(float(integral.evalf()))
-    # integrals_sympy is a list of the definite integrals for each sample up to high_alpha (using sympy)
-    # integrals is a list of the definite integrals for each sample up to high_alpha
 
-
-    auc_scores = np.array(auc_scores)
-    max_auc = np.max(auc_scores)
-    min_auc = np.min(auc_scores)
-    avg_auc = np.mean(auc_scores)    
+    auc_scores = np.array(auc_scores)  
     return auc_scores, FPR, TPRs, integrals, advs
+
+
+
 
 def plot_and_save_samplewise_auc(samplewise_auc, savedir_result):
     """

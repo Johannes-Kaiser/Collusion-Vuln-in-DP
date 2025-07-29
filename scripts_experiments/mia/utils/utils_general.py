@@ -33,6 +33,13 @@ import seaborn as sns
 import numpy as np
 import random
 import time
+from opacus_new import PrivacyEngine
+from sklearn.datasets import load_digits
+from sklearn.datasets import fetch_california_housing
+from sklearn.datasets import load_diabetes
+from sklearn.datasets import load_linnerud
+from sklearn.datasets import fetch_openml
+
 
 def train_loop(params, model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
     """
@@ -70,6 +77,7 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
     if privacy_engine is not None:
         epsilon = privacy_engine.get_epsilon(delta=1e-5)
         print(f"(DP) ε = {epsilon:.2f}")
+    return model
 
 def load_dataset(name, root='./data', train=True, transform=None, download=True):
     """
@@ -148,6 +156,52 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         bc = load_breast_cancer()
         X = torch.tensor(bc.data, dtype=torch.float32)
         y = torch.tensor(bc.target, dtype=torch.long)
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'digits':
+        digits = load_digits()
+        X = torch.tensor(digits.data, dtype=torch.float32)
+        y = torch.tensor(digits.target, dtype=torch.long)
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'california_housing':
+        housing = fetch_california_housing()
+        X = torch.tensor(housing.data, dtype=torch.float32)
+        y = torch.tensor(housing.target, dtype=torch.float32)
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'diabetes':
+        diabetes = load_diabetes()
+        X = torch.tensor(diabetes.data, dtype=torch.float32)
+        y = torch.tensor(diabetes.target, dtype=torch.float32)
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'linnerud':
+        linnerud = load_linnerud()
+        X = torch.tensor(linnerud.data, dtype=torch.float32)
+        y = torch.tensor(linnerud.target, dtype=torch.float32)
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'adult':
+        adult = fetch_openml(name='adult', version=2, as_frame=False)
+        X = torch.tensor(adult.data.astype(np.float32))
+        # Convert categorical target to int
+        y = torch.tensor((adult.target == ' >50K').astype(np.int64))
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'german_credit':
+        german = fetch_openml(name='credit-g', version=1, as_frame=False)
+        X = torch.tensor(german.data.astype(np.float32))
+        y = torch.tensor(german.target.astype(np.int64))
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'bank_marketing':
+        bank = fetch_openml(name='BankMarketing', version=1, as_frame=False)
+        X = torch.tensor(bank.data.astype(np.float32))
+        y = torch.tensor((bank.target == 'yes').astype(np.int64))
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'credit_card_default':
+        cc = fetch_openml(name='credit-g', version=1, as_frame=False)
+        X = torch.tensor(cc.data.astype(np.float32))
+        y = torch.tensor(cc.target.astype(np.int64))
+        dataset = torch.utils.data.TensorDataset(X, y)
+    elif name.lower() == 'phishing':
+        phishing = fetch_openml(name='Phishing', version=1, as_frame=False)
+        X = torch.tensor(phishing.data.astype(np.float32))
+        y = torch.tensor(phishing.target.astype(np.int64))
         dataset = torch.utils.data.TensorDataset(X, y)
     else:
         raise ValueError(f"Dataset {name} not supported.")
@@ -297,3 +351,35 @@ def save_logits(args, model, train_dl, DEVICE, savedir, path):
     logits_n = np.stack(logits_n, axis=1)
 
     np.save(os.path.join(savedir, path, "logits.npy"), logits_n)
+
+def make_private(model, train_loader, optimizer, pp_budgets, args):
+    # modulevalidator = ModuleValidator()
+    # model = modulevalidator.fix_and_validate(model)
+
+    privacy_engine = PrivacyEngine(accountant=args.accountant,
+                                   individualize=args.individualize,
+                                   weights=args.weights,
+                                   pp_budgets=pp_budgets)
+    if args.adapt_weights_to_budgets:
+        private_model, private_optimizer, private_loader = privacy_engine \
+            .make_private_with_epsilon(module=model,
+                                       optimizer=optimizer,
+                                       data_loader=train_loader,
+                                       target_epsilon=min(pp_budgets),
+                                       target_delta=args.target_delta,
+                                       epochs=args.epochs,
+                                       max_grad_norm=args.max_grad_norm,
+                                       optimal=True,
+                                       max_alpha=10_000,
+                                       numeric=True,
+                                       precision = 0.00001)
+    else:
+        private_model, private_optimizer, private_loader = privacy_engine \
+            .make_private(module=model,
+                          optimizer=optimizer,
+                          data_loader=train_loader,
+                          noise_multiplier=args.noise_multiplier,
+                          max_grad_norm=args.max_grad_norm)
+    print(np.unique(pp_budgets))
+    print(privacy_engine.weights)
+    return private_model, private_optimizer, private_loader, privacy_engine

@@ -11,7 +11,7 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from utils.utils_general import load_dataset, load_model, save_logits, train_loop
+from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private
 from utils.utils_mia import (
     indiv_scores,     
     generate_biregular_binary_matrix_random,
@@ -22,7 +22,6 @@ from utils.utils_mia import (
     load_pg_lists    
 )
 from tqdm import tqdm
-from opacus_new import PrivacyEngine
 import threading
 from queue import Queue
 import json
@@ -42,7 +41,7 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, required=True, help='YAML file with experiment parameters', default='./mia/exp_yaml/mnist_4.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_4.yaml')
     # Do not set defaults for any other arguments
     parser.add_argument("--dataset", type=str)
     parser.add_argument("--model", type=str)
@@ -65,7 +64,7 @@ def parse_args_with_yaml():
     parser.add_argument("--n_parallel", type=int)
     parser.add_argument("--disable_inner", action=argparse.BooleanOptionalAction)
     parser.add_argument("--seed", type=int)
-    args, unknown = parser.parse_known_args()
+    args = parser.parse_args()
 
     # Load config from YAML
     config = load_yaml_args(args.exp_yaml)
@@ -78,6 +77,7 @@ def parse_args_with_yaml():
                 print(f"Overwriting config value for '{k}': {config[k]} -> {v}")
             config[k] = v
     # Convert config dict to Namespace
+    config["target_delta"] = float(config["target_delta"])
     return argparse.Namespace(**config)
 
 args = parse_args_with_yaml()
@@ -104,143 +104,8 @@ args_dict = vars(args)
 with open(os.path.join(args.savedir_result, "args.json"), "w") as f:
     json.dump(args_dict, f, indent=2)
 
-def make_private(model, train_loader, optimizer, pp_budgets, args):
-    # modulevalidator = ModuleValidator()
-    # model = modulevalidator.fix_and_validate(model)
 
-    privacy_engine = PrivacyEngine(accountant=args.accountant,
-                                   individualize=args.individualize,
-                                   weights=args.weights,
-                                   pp_budgets=pp_budgets)
-    if args.adapt_weights_to_budgets:
-        private_model, private_optimizer, private_loader = privacy_engine \
-            .make_private_with_epsilon(module=model,
-                                       optimizer=optimizer,
-                                       data_loader=train_loader,
-                                       target_epsilon=min(pp_budgets),
-                                       target_delta=args.target_delta,
-                                       epochs=args.epochs,
-                                       max_grad_norm=args.max_grad_norm,
-                                       optimal=True,
-                                       max_alpha=10_000,
-                                       numeric=True)
-    else:
-        private_model, private_optimizer, private_loader = privacy_engine \
-            .make_private(module=model,
-                          optimizer=optimizer,
-                          data_loader=train_loader,
-                          noise_multiplier=args.noise_multiplier,
-                          max_grad_norm=args.max_grad_norm)
-    print(np.unique(pp_budgets))
-    print(privacy_engine.weights)
-    return private_model, private_optimizer, private_loader, privacy_engine
         
-
-def train_shadow_worker(shadow_id, keep, size, args, DEVICE):
-    seed = int(time.time() * 1e6) % (2**32)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-    keep_indiv = np.array(keep[shadow_id], dtype=bool)
-    keep_indiv = keep_indiv.nonzero()[0]
-    train_ds = load_dataset(args.dataset, train=True)
-    test_ds = load_dataset(args.dataset, train=False)
-
-    m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
-    m = m.to(DEVICE)
-
-    keep_bool = np.full((size), False)
-    keep_bool[keep_indiv] = True
-
-    train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
-    # print(len(train_ds), "samples in shadow dataset", shadow_id)
-    train_dl = DataLoader(
-        train_ds, batch_size=256, shuffle=True, num_workers=4, persistent_workers=True
-    )
-    test_dl = DataLoader(
-        test_ds, batch_size=256, shuffle=False, num_workers=4, persistent_workers=True
-    )
-
-    optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
-    criterion = torch.nn.CrossEntropyLoss()
-
-    model = train_loop(
-        args,
-        model,
-        train_dl,
-        criterion,
-        optim,
-        sched,
-        DEVICE,
-        args.epochs
-    )
-
-    savedir = os.path.join(args.savedir, str(seed))
-    os.makedirs(savedir, exist_ok=True)
-    np.save(savedir + "/keep.npy", keep_bool)
-    torch.save(m.state_dict(), savedir + "/model.pt")
-
-def train_shadow_models():
-    seed = int(time.time() * 1e6) % (2**32)
-    np.random.seed(seed)
-    args.debug = True
-
-    dummy_train_ds = load_dataset(args.dataset, train=True)
-    size = len(dummy_train_ds)
-
-    if args.n_shadows is not None:
-        keep = np.random.uniform(0, 1, size=(args.n_shadows, size))
-        order = keep.argsort(0)
-        keep = order < int(args.pkeep * args.n_shadows)
-    else:
-        keep = np.random.choice(size, size=int(args.pkeep * size), replace=False)
-        keep.sort()
-
-    threads = []
-    active_threads = []
-    n_parallel = getattr(args, "n_parallel", 1)
-    
-    for shadow_id in range(args.n_shadows):
-        if torch.cuda.is_available():
-            stream = torch.cuda.Stream()
-            def worker_with_stream(shadow_id=shadow_id, stream=stream):
-                try:
-                    with torch.cuda.stream(stream):
-                        train_shadow_worker(shadow_id, keep, size, args, DEVICE)
-                except Exception as e:
-                    print(f"Error occurred in worker thread for shadow {shadow_id}: {e}")
-            t = threading.Thread(target=worker_with_stream)
-        else:
-            t = threading.Thread(target=train_shadow_worker, args=(shadow_id, keep, size, args, DEVICE))
-        threads.append(t)
-
-    total_jobs = len(threads)
-    active_threads = []
-    idx = 0
-    with tqdm(total=total_jobs) as pbar:
-        while idx < total_jobs or active_threads:
-            # Start new threads if we have capacity
-            while len(active_threads) < n_parallel and idx < total_jobs:
-                t = threads[idx]
-                t.start()
-                active_threads.append(t)
-                idx += 1
-            # Remove finished threads
-            still_active = []
-            for t in active_threads:
-                if t.is_alive():
-                    still_active.append(t)
-                else:
-                    pbar.update(1)
-            active_threads = still_active
-            if active_threads:
-                # Avoid busy waiting
-                active_threads[0].join(timeout=0.5)
-    for t in active_threads:
-        t.join()
 
 def train_target_models():
 
@@ -398,10 +263,7 @@ def train_target_models():
             stream = torch.cuda.Stream()
             def worker_with_stream(target_id=target_id, stream=stream):
                 with torch.cuda.stream(stream):
-                    try: 
-                        worker(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list)
-                    except Exception as e:
-                        print(f"Error occurred in worker thread for target {target_id}: {e}")
+                    worker(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list)
             t = threading.Thread(target=worker_with_stream)
         else:
             t = threading.Thread(target=worker, args=(target_id, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list))
