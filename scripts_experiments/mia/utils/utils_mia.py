@@ -16,37 +16,55 @@ import time
 
 from utils.utils_general import load_dataset
 
-def load_one(input_tuple):
+def softmax(preds):
+    predictions = preds - np.max(preds, axis=-1, keepdims=True)
+    predictions = np.array(np.exp(predictions), dtype=np.float64)
+    predictions = predictions / np.sum(predictions, axis=-1, keepdims=True)
+    return predictions
+
+def score_mia_one(input_tuple):
     """
     This loads a logits and converts it to a scored prediction.
     """
+    labels = load_dataset(dataset_name, train=True).targets.numpy()
+    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
+    count = predictions.shape[0]
+    
     path, dataset_name = input_tuple
     opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
+    predictions = softmax(opredictions)
 
-    # Be exceptionally careful.
-    # Numerically stable everything, as described in the paper.
-    predictions = opredictions - np.max(opredictions, axis=-1, keepdims=True)
-    predictions = np.array(np.exp(predictions), dtype=np.float64)
-    predictions = predictions / np.sum(predictions, axis=-1, keepdims=True)
-
-    labels = load_dataset(dataset_name, train=True).targets.numpy()
-
-    COUNT = predictions.shape[0]
-    y_true = predictions[np.arange(COUNT), :, labels[:COUNT]]
-
-    print("mean acc", np.mean(predictions[:, 0, :].argmax(1) == labels[:COUNT]))
-
-    predictions[np.arange(COUNT), :, labels[:COUNT]] = 0
-    y_wrong = np.sum(predictions, axis=-1)
-
+    y_true = predictions[np.arange(count), :, labels]
+    predictions[np.arange(count), :, labels] = 0
+    y_wrong = predictions.sum(axis=-1)
     logit = np.log(y_true + 1e-45) - np.log(y_wrong + 1e-45)
-    np.save(os.path.join(path, "scores.npy"), logit)    
+    np.save(os.path.join(path, "scores.npy"), logit)
+
+def score_rmia_one(input_tuple):
+    """
+    This loads a logits and converts it to a scored prediction.
+    """
+    labels = load_dataset(dataset_name, train=True).targets.numpy()
+    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
+
+    path, dataset_name = input_tuple
+    opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
+    predictions = softmax(opredictions)
+
+    count = predictions.shape[0]
+    y_true = predictions[np.arange(count), :, labels]
+    np.save(os.path.join(path, "rmia_scores.npy"), y_true) 
 
 
-def load_stats(params, savedir):
+def score_mia(params, savedir):
     dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
     with mp.get_context("spawn").Pool(8) as p:
-        p.map(load_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+        p.map(score_mia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+
+def score_rmia(params, savedir):
+    dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
+    with mp.get_context("spawn").Pool(8) as p:
+        p.map(score_rmia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
 
 
 def sweep(score, x):
@@ -58,7 +76,7 @@ def sweep(score, x):
     return fpr, tpr, auc(fpr, tpr), acc
 
 
-def load_data(params, savedir):
+def load_data(savedir):
     """
     Load our saved scores and then put them into a big matrix.
     """
@@ -268,7 +286,7 @@ def fig_fpr_tpr_target(args, keep, scores, keep_target, scores_target, savedir, 
     plt.savefig(f"{savedir}/{name}.png")
     plt.close()
 
-def indiv_scores(keep, scores):
+def fit_mia_in_out_gaussians(keep, scores):
     """
     Fit a two predictive models using keep and scores in order to predict
     if the examples in check_scores were training data or not, using the
@@ -293,7 +311,9 @@ def indiv_scores(keep, scores):
 
     std_in = np.std(dat_in, 1)
     std_out = np.std(dat_out, 1)
+    return mean_in, mean_out, std_in, std_out
 
+def compute_individual_scores(mean_in, mean_out, std_in, std_out):
     auc_scores = []
     for j in range(scores.shape[1]):
         # For each record in this model

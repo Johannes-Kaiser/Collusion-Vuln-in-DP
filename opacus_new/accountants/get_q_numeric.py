@@ -14,7 +14,7 @@ logging.set_verbosity(
     logging.ERROR
 )  # suppress dp_accounting numerical warnings for RDP
 
-MIN_Q = 1e-9
+MIN_Q = 1e-14
 MAX_Q = 1
 MAX_SIGMA = 1e6
 DEFAULT_RDP_ORDERS = (
@@ -123,6 +123,9 @@ def get_sample_rate_estimates_rdp(
                 (idx, eps, sigma, target_delta, steps)
                 for idx, eps in enumerate(target_epsilons)
             ]
+            # for idx, task in enumerate(tasks):
+            #     _, q = _q_worker(task)
+            #     qs[idx] = q if q is not None else 0.0
             for idx, q in pool.map(_q_worker, tasks):
                 qs[idx] = q if q is not None else 0.0
             q_mean = float(np.dot(qs, ratios))
