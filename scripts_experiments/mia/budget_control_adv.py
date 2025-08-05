@@ -11,13 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private
 from utils.utils_mia import (
-    indiv_scores,     
-    generate_biregular_binary_matrix_random,
-    load_stats,
-    load_data, 
-    plot_and_save_samplewise_auc,
-    plot_and_save_integrals,
-    load_pg_lists    
+    score_mia,
+    load_data,  
+    fit_mia_in_out_gaussians,
+    compute_individual_scores   
 )
 from tqdm import tqdm
 from opacus_new import PrivacyEngine
@@ -52,7 +49,7 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_4_budget_adv.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_2_budget_adv.yaml')
     parser.add_argument('--idx_start', type=int, help='Start index for attackee', default=0)
     parser.add_argument('--idx_end', type=int, help='End index for attackee', default=100)
     args = parser.parse_args()
@@ -77,6 +74,7 @@ args = parse_args_with_yaml()
 def format_list(lst):
     return "_".join(str(x).replace('.', '').replace('-', 'm') for x in lst)
 
+batchsize = getattr(args, "batchsize", 128)
 if args.n_parallel > 1:
     args.disable_inner = True
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -96,7 +94,7 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
 
     train_ds_sub = torch.utils.data.Subset(train_ds, keep_indiv)
     train_dl = DataLoader(
-        train_ds_sub, batch_size=128, shuffle=True, num_workers=0  # set num_workers=0 to reduce memory
+        train_ds_sub, batch_size=batchsize, shuffle=True, num_workers=0  # set num_workers=0 to reduce memory
     )
 
     m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
@@ -108,8 +106,8 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
     pp_budgets_subset = pp_budgets[keep_indiv]
     unique, counts = np.unique(pp_budgets_subset, return_counts=True)
     str_budget = generate_string(unique, counts)
-    # print(NM)
-    # print(SR)
+    print(NM)
+    print(SR)
     if str_budget in SR and str_budget in NM:
         model, optim, train_dl, privacy_engine = make_private(
             model, train_dl, optim, pp_budgets_subset, args,
@@ -161,7 +159,7 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
     torch.cuda.empty_cache()
     gc.collect()
 
-def train_target_models(attackee_idx, attacker_budgets):
+def train_target_models(attackee_idx, attacker_budgets, ctx, manager, SR_mp, NM_mp):
     if args.private == True:
         dummy_train_ds = load_dataset(args.dataset, train=True)
         size = len(dummy_train_ds)
@@ -180,14 +178,11 @@ def train_target_models(attackee_idx, attacker_budgets):
     keep = keep_tensors
 
     n_parallel = getattr(args, "n_parallel", 1)
-    ctx = mp.get_context("spawn")
-    manager = ctx.Manager()
     seeds_out_mp = manager.list([None] * args.n_targets)
     pg_sample_rates_list_mp = manager.list([None] * args.n_targets)
     pg_noise_multiplier_list_mp = manager.list([None] * args.n_targets)
     num_steps_list_mp = manager.list([None] * args.n_targets)
-    SR_mp = manager.dict()  # <-- managed dict for SR
-    NM_mp = manager.dict()  # <-- managed dict for NM
+    
     train_ds = load_dataset(args.dataset, train=True)
     processes = []
     for target_id in range(args.n_targets):
@@ -211,7 +206,6 @@ def train_target_models(attackee_idx, attacker_budgets):
             ),
         )
         processes.append(p)
-    # ...existing code...
 
     total_jobs = len(processes)
     active_processes = []
@@ -238,8 +232,6 @@ def train_target_models(attackee_idx, attacker_budgets):
     for p in active_processes:
         p.join()
 
-
-    # --- Explicit cleanup ---
     del train_ds, keep, processes, active_processes
     torch.cuda.empty_cache()
     import gc
@@ -261,7 +253,7 @@ def train_target_models(attackee_idx, attacker_budgets):
 
 def inference(savedir):
     train_ds = load_dataset(args.dataset, train=True)
-    train_dl = DataLoader(train_ds, batch_size=128, shuffle=False, num_workers=0)  # num_workers=0
+    train_dl = DataLoader(train_ds, batch_size=batchsize, shuffle=False, num_workers=0)  # num_workers=0
     # Infer the logits with multiple queries
     for path in tqdm(os.listdir(savedir)):
         m = load_model(args.dataset, model_name=args.model, num_classes=None)
@@ -281,7 +273,7 @@ def inference(savedir):
 
 def test_models(savedir):
     test_ds = load_dataset(args.dataset, train=False)
-    test_dl = DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=0)  # num_workers=0
+    test_dl = DataLoader(test_ds, batch_size=batchsize, shuffle=False, num_workers=0)  # num_workers=0
     # Infer the logits with multiple queries
     for path in tqdm(os.listdir(savedir)):
         m = load_model(args.dataset, model_name=args.model, num_classes=None)
@@ -313,35 +305,42 @@ def test_models(savedir):
 
 
 if __name__ == "__main__":
-
+    ctx = mp.get_context("spawn")
+    manager = ctx.Manager()
+    SR_mp = manager.dict()  # <-- managed dict for SR
+    NM_mp = manager.dict()  # <-- managed dict for NM
     for attackee_idx in range(args.idx_start, args.idx_end):
         for attacker_budgets in args.budgets:
             default_path = f"{args.dataset}_[{attacker_budgets}_{args.budgets_attackee}]"
             # Set savedir, savedir_target, and savedir_result as hardcoded attributes on args
-            args.savedir_target = f"./budget_adv_final/{attackee_idx}/{default_path}/target"
-            args.savedir_result = f"./budget_adv_final/{attackee_idx}/{default_path}/results"
+            args.savedir_target = f"./budget_adv_final_by_dataset/{args.dataset}/{attackee_idx}/{default_path}/target"
+            args.savedir_result = f"./budget_adv_final_by_dataset/{args.dataset}/{attackee_idx}/{default_path}/results"
             os.makedirs(args.savedir_result, exist_ok=True)
             os.makedirs(args.savedir_target, exist_ok=True)
 
             with open(os.path.join(args.savedir_result, "args.json"), "w") as f:
                 json.dump(vars(args), f, indent=2)
-            _ = train_target_models(attackee_idx, attacker_budgets)
-            seeds = [folder for folder in os.listdir(args.savedir_target) if os.path.isdir(os.path.join(args.savedir_target, folder))]
-            inference(args.savedir_target)
-            test_models(args.savedir_target)
-            load_stats(args, args.savedir_target)
-            keep_target, scores_target = load_data(args, args.savedir_target)
+            if args.train_and_save_models:
+                _ = train_target_models(attackee_idx=attackee_idx, attacker_budgets=attacker_budgets, ctx=ctx, manager=manager, SR_mp=SR_mp, NM_mp=NM_mp)
+            if args.compute_and_save_logits:
+                inference(args.savedir_target)
+            if args.compute_and_save_scores:
+                score_mia(args, args.savedir_target)
+            if args.compute_and_save_stats:
+                keep, scores = load_data(args.savedir_target)
 
-            indices_all = np.arange(keep_target.shape[1])
+            indices_all = np.arange(keep.shape[1])
             indices_all_except_idx = np.delete(indices_all, attackee_idx)
             
             # keep_target_budget = keep_target[:, indices_all_except_idx]
             # scores_target_budget = scores_target[:, indices_all_except_idx, :]
             # indiv_scores_val_all_except_idx, x_vals_all_except_idx, samplewise_R_all_except_idx, integrals_all_except_idx, adv_all_except_idx = indiv_scores(keep_target_budget, scores_target_budget)
 
-            keep_target_budget = np.expand_dims(keep_target[:, attackee_idx], axis=1)
-            scores_target_budget = np.expand_dims(scores_target[:, attackee_idx, :], axis=1)
-            indiv_scores_val_attackee, x_vals_attackee, samplewise_R_attackee, integrals_attackee, adv_attackee = indiv_scores(keep_target_budget, scores_target_budget)
+            keep_target_budget = np.expand_dims(keep[:, attackee_idx], axis=1)
+            scores_target_budget = np.expand_dims(scores[:, attackee_idx, :], axis=1)
+            mean_in, mean_out, std_in, std_out = fit_mia_in_out_gaussians(keep_target_budget, scores_target_budget)
+            indiv_scores_val_attackee, x_vals_attackee, samplewise_R_attackee, integrals_attackee, adv_attackee = compute_individual_scores(mean_in, mean_out, std_in, std_out)
+
             # Save the computed arrays/lists as .npy files in args.savedir_result
             np.save(os.path.join(args.savedir_result, "indiv_scores_val_attackee.npy"), np.array(indiv_scores_val_attackee))
             np.save(os.path.join(args.savedir_result, "x_vals_attackee.npy"), np.array(x_vals_attackee))

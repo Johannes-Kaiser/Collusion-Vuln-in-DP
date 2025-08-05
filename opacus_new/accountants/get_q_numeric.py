@@ -14,7 +14,7 @@ logging.set_verbosity(
     logging.ERROR
 )  # suppress dp_accounting numerical warnings for RDP
 
-MIN_Q = 1e-14
+MIN_Q = 1e-18
 MAX_Q = 1
 MAX_SIGMA = 1e6
 DEFAULT_RDP_ORDERS = (

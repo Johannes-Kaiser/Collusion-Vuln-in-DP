@@ -26,13 +26,13 @@ def score_mia_one(input_tuple):
     """
     This loads a logits and converts it to a scored prediction.
     """
-    labels = load_dataset(dataset_name, train=True).targets.numpy()
-    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
-    count = predictions.shape[0]
-    
     path, dataset_name = input_tuple
+    labels = load_dataset(dataset_name, train=True).targets.numpy()
+    
     opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
     predictions = softmax(opredictions)
+    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
+    count = predictions.shape[0]
 
     y_true = predictions[np.arange(count), :, labels]
     predictions[np.arange(count), :, labels] = 0
@@ -315,7 +315,7 @@ def fit_mia_in_out_gaussians(keep, scores):
 
 def compute_individual_scores(mean_in, mean_out, std_in, std_out):
     auc_scores = []
-    for j in range(scores.shape[1]):
+    for j in range(mean_in.shape[0]):
         # For each record in this model
         mu_x = mean_in[j]
         mu_xp = mean_out[j]
@@ -328,7 +328,7 @@ def compute_individual_scores(mean_in, mean_out, std_in, std_out):
     advs = []
     TPRs = []
     FPR = np.linspace(1e-6, 1 - 1e-6, 100000)
-    for j in range(scores.shape[1]):
+    for j in range(mean_in.shape[0]):
         mu1 = mean_in[j]
         mu0 = mean_out[j]
         sigma1 = std_in[j]

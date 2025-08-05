@@ -45,6 +45,12 @@ import pandas as pd
 import yaml
 import argparse
 
+def extend_dict(dict1, dict2):
+    for k, v in dict2.items():
+        if k not in dict1:
+            dict1[k] = v
+    return dict1
+
 def get_budget_to_index_from_seeds(savedir, seeds):
     budget_to_index_list = []
     for seed in seeds:
@@ -197,8 +203,8 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         full_dataset = MNIST(root=root, train=True, transform=transform, download=download)
         # Get indices for class 0 and class 1
         targets = np.array(full_dataset.targets)
-        idx_0 = np.where(targets == 0)[0][:500]
-        idx_1 = np.where(targets == 1)[0][:500]
+        idx_0 = np.where(targets == 0)[0][:100]
+        idx_1 = np.where(targets == 1)[0][:100]
         selected_idx = np.concatenate([idx_0, idx_1])
         # Subset the dataset
         dataset = Subset(full_dataset, selected_idx)

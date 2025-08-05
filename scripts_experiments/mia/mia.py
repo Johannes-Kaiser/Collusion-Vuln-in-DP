@@ -23,7 +23,6 @@ from utils.utils_general import (
     generate_pp_budgets
 )
 from utils.utils_mia import (
-    indiv_scores,     
     generate_biregular_binary_matrix_random,
     score_mia,
     score_rmia,
