@@ -9,7 +9,7 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private
+from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private, generate_string
 from utils.utils_mia import (
     score_mia,
     load_data,  
@@ -32,11 +32,6 @@ from types import SimpleNamespace
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-def generate_string(list1, list2, sep1=": ", sep2=","):
-    if len(list1) != len(list2):
-        raise ValueError("Lists must be of the same length.")
-    return sep2.join(f"{k}{sep1}{v}" for k, v in zip(list1, list2))#
-
 
 # --- YAML experiment config support ---
 def load_yaml_args(yaml_path):
@@ -50,10 +45,10 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_4_small_budget_adv.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/zz_temp.yaml')
     parser.add_argument('--idx_start', type=int, help='Start index for attackee', default=0)
     parser.add_argument('--idx_end', type=int, help='End index for attackee', default=200)
-    parser.add_argument('--dataset', type=str, help='Dataset to use', default='')
+    parser.add_argument('--dataset', type=str, help='Dataset to use', default='uci_epileptic')
     args = parser.parse_args()
 
     # Load config from YAML
@@ -70,7 +65,6 @@ def parse_args_with_yaml():
     config["target_delta"] = float(config["target_delta"])
     return argparse.Namespace(**config)
 
-args = parse_args_with_yaml()
 
 # Construct default_path from dataset, budgets, and portions
 def format_list(lst):
@@ -131,6 +125,7 @@ def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, devi
 
         optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=5e-4)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
+        # sched = torch.optim.lr_scheduler.LinearLR(optim, start_factor=1.0, end_factor=0.4, total_iters=args.epochs)
         criterion = torch.nn.CrossEntropyLoss()
 
         pp_budgets_subset = pp_budgets[keep_indiv]
@@ -307,6 +302,8 @@ def worker_mp(args_dict, SR_mp, NM_mp, attackee_idx, lock):
             yaml.dump(yaml_data, f)
 
 if __name__ == "__main__":
+    args = parse_args_with_yaml()
+
     for k, v in vars(args).items():
         try:
             pickle.dumps(v)

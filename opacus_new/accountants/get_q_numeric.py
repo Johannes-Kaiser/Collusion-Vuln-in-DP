@@ -16,7 +16,7 @@ logging.set_verbosity(
 
 MIN_Q = 1e-18
 MAX_Q = 1
-MAX_SIGMA = 1e6
+MAX_SIGMA = 1e12
 DEFAULT_RDP_ORDERS = (
     [1 + x / 10.0 for x in range(1, 100)] + list(range(11, 64)) + [128, 256, 512, 1024]
 )

@@ -13,6 +13,7 @@ from scipy.stats import norm
 import seaborn as sns
 import numpy as np
 import time
+from torch.utils.data import Subset
 
 from utils.utils_general import load_dataset
 
@@ -27,8 +28,11 @@ def score_mia_one(input_tuple):
     This loads a logits and converts it to a scored prediction.
     """
     path, dataset_name = input_tuple
-    labels = load_dataset(dataset_name, train=True).targets.numpy()
-    
+    dataset = load_dataset(dataset_name, train=True)
+    if isinstance(dataset, Subset):
+        labels = dataset.targets.numpy()
+    else:
+        labels = dataset.tensors[1].numpy()
     opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
     predictions = softmax(opredictions)
     assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
@@ -58,8 +62,10 @@ def score_rmia_one(input_tuple):
 
 def score_mia(params, savedir):
     dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
-    with mp.get_context("spawn").Pool(8) as p:
-        p.map(score_mia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+    # with mp.get_context("spawn").Pool(8) as p:
+    #     p.map(score_mia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+    for x in os.listdir(savedir):
+        score_mia_one((os.path.join(savedir, x), dataset))
 
 def score_rmia(params, savedir):
     dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]

@@ -7,8 +7,11 @@ sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 
 import os
 import time
-import numpy as np
+import json
 import torch
+import warnings
+import numpy as np
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from utils.utils_general import (
     load_dataset, 
@@ -20,12 +23,13 @@ from utils.utils_general import (
     get_dataset_size,
     get_budget_to_index_from_seeds,
     format_list,
-    generate_pp_budgets
+    generate_pp_budgets, 
+    generate_string,
+    assign_pp_values
 )
 from utils.utils_mia import (
     generate_biregular_binary_matrix_random,
     score_mia,
-    score_rmia,
     load_data, 
     plot_and_save_samplewise_auc,
     plot_and_save_integrals,
@@ -33,19 +37,15 @@ from utils.utils_mia import (
     fit_mia_in_out_gaussians,
     compute_individual_scores    
 )
-from tqdm import tqdm
-import threading
-from queue import Queue
-import json
 
-
+warnings.filterwarnings("ignore", category=UserWarning)
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 
 import torch.multiprocessing as mp
 
-def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list):
+def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list):
     # Each process needs its own seed and device context
     seed = int(time.time() * 1e6) % (2**32)
     np.random.seed(seed)
@@ -64,9 +64,13 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
     if args.private:
         train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
         pp_budgets_subset = pp_budgets[keep_indiv]
+        unique, counts = np.unique(pp_budgets_subset, return_counts=True)
+        str_budget = generate_string(unique, counts)
     else:
         train_ds = torch.utils.data.Subset(train_ds, keep_indiv)
         pp_budgets_subset = None
+        str_budget = "non_private"
+
 
     m = model = load_model(args.dataset, model_name=args.model, num_classes=None)
     m = m.to(DEVICE)
@@ -81,20 +85,37 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
     optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
     criterion = torch.nn.CrossEntropyLoss()
-
+    
     if args.private:
-        model, optim, train_dl, privacy_engine = make_private(
-            model, train_dl, optim, pp_budgets_subset, args
-        )
+        use_cached = str_budget in SR_mp and str_budget in NM_mp
+        if use_cached:
+            nm_local = NM_mp[str_budget]
+            sr_local = SR_mp[str_budget]
+        if use_cached:
+            model, optim, train_dl, privacy_engine = make_private(
+                model, train_dl, optim, pp_budgets_subset, args,
+                adapt_weights_to_budgets=False, nm=nm_local, sr=sr_local
+            )
+        else:
+            model, optim, train_dl, privacy_engine = make_private(
+                model, train_dl, optim, pp_budgets_subset, args
+            )
         pg_sample_rates_list[target_id] = privacy_engine.weights
         pg_noise_multiplier_list[target_id] = [optim.noise_multiplier] * len(privacy_engine.weights)
+        if str_budget not in SR_mp:
+                SR_mp[str_budget] = pg_sample_rates_list[target_id]
+        if str_budget not in NM_mp:
+            NM_mp[str_budget] = pg_noise_multiplier_list[target_id]
     else:
         pg_sample_rates_list[target_id] = None
         pg_noise_multiplier_list[target_id] = None
 
     num_steps = args.epochs * len(train_dl)
     num_steps_list[target_id] = num_steps
-
+    if args.individualize == "clipping":
+        pp_max_grad_norms = assign_pp_values(pp_budgets_subset, privacy_engine.weights) # sample rate is clipping range in that setting
+    else:
+        pp_max_grad_norms = None
     model = train_loop(
         args,
         model,
@@ -103,7 +124,8 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
         optim,
         sched,
         DEVICE,
-        args.epochs
+        args.epochs,
+        pp_max_grad_norms
     )
 
     savedir = os.path.join(args.savedir_target, str(seed))
@@ -113,7 +135,7 @@ def mp_worker(target_id, train_ds, keep, size, args, DEVICE, pp_budgets, budget_
     with open(os.path.join(savedir, "bti.npy"), "wb") as f:
         np.save(f, budget_to_index, allow_pickle=True)        
 
-def train_target_models(portions):
+def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
 
     if args.private == True:
         size = get_dataset_size(args.dataset, train=True)
@@ -155,9 +177,7 @@ def train_target_models(portions):
     n_parallel = getattr(args, "n_parallel", 1)
   
 
-    # Use multiprocessing to spawn processes
-    ctx = mp.get_context("spawn")
-    manager = ctx.Manager()
+
     # Use managed lists for shared memory between processes
     seeds_out_mp = manager.list([None] * args.n_targets)
     pg_sample_rates_list_mp = manager.list([None] * args.n_targets)
@@ -173,6 +193,8 @@ def train_target_models(portions):
             args=(
                 target_id,
                 train_ds,
+                NM_mp,
+                SR_mp,
                 keep,
                 size,
                 args,
@@ -225,6 +247,36 @@ def train_target_models(portions):
 
     return seeds_out, num_steps_list
 
+def test_models(args, savedir, device):
+    test_ds = load_dataset(args.dataset, train=False)
+    test_dl = DataLoader(test_ds, batch_size=args.batchsize, shuffle=False, num_workers=0)  # num_workers=0
+    # Infer the logits with multiple queries
+    for path in os.listdir(savedir):
+        m = load_model(args.dataset, model_name=args.model, num_classes=None)
+        m.load_state_dict(torch.load(os.path.join(savedir, path, "model.pt")))
+        m.to(device)
+        m.eval()
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for data, target in test_dl:
+                data, target = data.to(device), target.to(device)
+                outputs = m(data)
+                _, predicted = torch.max(outputs.data, 1)
+                total += target.size(0)
+                correct += (predicted == target).sum().item()
+        accuracy = correct / total
+        print(f"Accuracy for model in {path}: {accuracy:.4f}")
+        np.save(os.path.join(savedir, path, "accuracy.npy"), np.array([accuracy]))
+        del m
+        torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+    del test_dl, test_ds
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+    return
 
 def inference(savedir):
     train_ds = load_dataset(args.dataset, train=True)
@@ -243,13 +295,18 @@ if __name__ == "__main__":
     args = parse_args_with_yaml()
     if args.n_parallel > 1:
         args.disable_inner = True
+    # Use multiprocessing to spawn processes
+    ctx = mp.get_context("spawn")
+    manager = ctx.Manager()
+    SR_mp = manager.dict()  # <-- managed dict for SR
+    NM_mp = manager.dict()  # <-- managed dict for NM
 
     for portion in args.portions:
         portions = [portion, 1-portion]
         default_path = f"{args.dataset}/{args.dataset}_[{format_list(args.budgets)}]_[{format_list(portions)}]/{str(args.seed)}"
-        args.savedir = f"./exp_mia_final/{default_path}/shadow"
-        args.savedir_target = f"./exp_mia_final/{default_path}/target"
-        args.savedir_result = f"./exp_mia_final/{default_path}/results"
+        args.savedir = f"./exp_mia_final_{args.individualize}/{default_path}/shadow"
+        args.savedir_target = f"./exp_mia_final_{args.individualize}/{default_path}/target"
+        args.savedir_result = f"./exp_mia_final_{args.individualize}/{default_path}/results"
 
         # Save the args dict as a JSON file in savedir_result
         os.makedirs(args.savedir_result, exist_ok=True)
@@ -262,7 +319,9 @@ if __name__ == "__main__":
         integrals_all = {}
 
         if args.train_and_save_models:
-            _ = train_target_models(portions)
+            _ = train_target_models(portions, ctx, manager, SR_mp, NM_mp)
+        if args.test_model:
+            test_models(args, args.savedir_target, DEVICE)
         if args.compute_and_save_logits:
             inference(args.savedir_target)
         if args.compute_and_save_scores:

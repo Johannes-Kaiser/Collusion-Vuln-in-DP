@@ -405,7 +405,7 @@ class DPOptimizer(Optimizer):
         ]
         per_sample_norms = torch.stack(per_param_norms, dim=1).norm(2, dim=1)
         clip_threshold = self.max_grad_norm
-        if pp_max_grad_norms:
+        if pp_max_grad_norms is not None:
             clip_threshold = torch.Tensor(pp_max_grad_norms)
         per_sample_clip_factor = (clip_threshold / (per_sample_norms + 1e-6))\
             .clamp(max=1.0)

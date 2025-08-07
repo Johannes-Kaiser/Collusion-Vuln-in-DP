@@ -4,20 +4,21 @@
 dataset: mnist_4
 model: null
 lr: 0.01
+batchsize: 128
 epochs: 15
-n_shadows: 5
-n_targets: 512
+n_targets: 5
 pkeep: 0.5
 debug: false
 n_queries: 2
 private: true
 adapt_weights_to_budgets: true
 accountant: rdp
-individualize: sampling
+individualize: clipping
 weights: null
 target_delta: 1e-10
 max_grad_norm: 1.0
 portions:
+  - 0.2
   - 0.4
   - 0.6
   - 0.8
@@ -32,3 +33,4 @@ compute_and_save_logits: true
 compute_and_save_scores: true
 compute_and_save_stats: true
 plot_results: false
+test_model: true

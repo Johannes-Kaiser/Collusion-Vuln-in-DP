@@ -18,22 +18,22 @@ source /vol/miltank/users/kaiserj/Indivdiual_Privacy_DPSGD_Evaluation/.venv/bin/
 
 /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
     scripts_experiments/mia/mia.py \
-    --seed 1 --exp_yaml $1 &
+    --seed 1 --exp_yaml $1 --individualize $2 &
 
 /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
     scripts_experiments/mia/mia.py \
-    --seed 2 --exp_yaml $1 &
+    --seed 2 --exp_yaml $1 --individualize $2 &
 
 /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
     scripts_experiments/mia/mia.py \
-    --seed 3 --exp_yaml $1 &
+    --seed 3 --exp_yaml $1 --individualize $2 &
 
 /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
     scripts_experiments/mia/mia.py \
-    --seed 4 --exp_yaml $1 &
+    --seed 4 --exp_yaml $1 --individualize $2 &
 
 /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
     scripts_experiments/mia/mia.py \
-    --seed 5 --exp_yaml $1 &
+    --seed 5 --exp_yaml $1 --individualize $2 &
 
 wait

@@ -407,18 +407,18 @@ class IndexedDataset:
 
     @classmethod
     def from_dataset(cls, dataset):
-        return cls(data=dataset.data,
-                   targets=dataset.targets,
-                   transform=dataset.transform,
-                   target_transform=dataset.target_transform)
+        return cls(data=dataset.dataset.tensors[0][dataset.indices],
+                   targets=dataset.dataset.tensors[1][dataset.indices],
+                   transform=None,
+                   target_transform=None)
 
     def __getitem__(self, index):
         img, target = self.data[index], int(self.targets[index])
 
         # doing this so that it is consistent with all other datasets
         # to return a PIL Image
-        if isinstance(img, np.ndarray):
-            img = Image.fromarray(img)
+        if isinstance(img, np.ndarray) or isinstance(img, torch.Tensor):
+            img = img
         else:
             # img = np.uint8(img.numpy())
             img = Image.fromarray(img)

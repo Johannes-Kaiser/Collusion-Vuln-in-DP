@@ -1,52 +1,78 @@
-import torch
-from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
-from torchvision import transforms
-from torchvision.datasets import CIFAR10
-from torchvision import transforms
-from torchvision.datasets import FashionMNIST
-from torchvision import transforms
-from torchvision.datasets import SVHN
-from torchvision import transforms
-from sklearn.datasets import load_iris
-import torch
-from sklearn.datasets import load_wine
-from sklearn.datasets import load_breast_cancer
-from torchvision.models import resnet18
-from torchvision.models import vgg11
-import numpy as np
 import os
-from tqdm import tqdm
-import functools
-import scipy.stats
-from sklearn.metrics import auc, roc_curve
-import matplotlib.pyplot as plt
-from sympy.stats import Normal, cdf, quantile
-from opacus_new.accountants import RDPAccountant
-
-import multiprocessing as mp
-import os
-from pathlib import Path
-from torch.utils.data import Subset
-from scipy.stats import norm
-import seaborn as sns
-import numpy as np
-import random
-import time
-from opacus_new import PrivacyEngine
-from sklearn.datasets import load_digits
-from sklearn.datasets import fetch_california_housing
-from sklearn.datasets import load_diabetes
-from sklearn.datasets import load_linnerud
-from sklearn.datasets import fetch_openml
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import pandas as pd
+import torch
 import yaml
 import argparse
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+from torch.utils.data import Subset
+from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, SVHN
+from torchvision import transforms
+from torchvision.models import resnet18, vgg11
+from opacus_new import PrivacyEngine
+from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, fetch_california_housing, load_diabetes, load_linnerud, fetch_openml
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelBinarizer, MinMaxScaler
-import subprocess
-import zipfile
+import kagglehub
+
+datasets_info = {
+    # Vision datasets
+    "mnist": {"classes": 10, "input_features": 28 * 28, "model_type": "mlp"},
+    "mnist_4": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
+    "mnist_2": {"classes": 2, "input_features": 28 * 28, "model_type": "mlp"},
+    "mnist_4_small": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
+    "cifar10": {"classes": 10, "input_features": 3, "model_type": "simple_cnn"},
+    "fashionmnist": {"classes": 10, "input_features": 1, "model_type": "simple_cnn"},
+    "svhn": {"classes": 10, "input_features": 1, "model_type": "simple_cnn"},
+
+    # Tabular datasets (sklearn & OpenML)
+    "iris": {"classes": 3, "input_features": 4, "model_type": "mlp"},
+    "wine": {"classes": 3, "input_features": 13, "model_type": "mlp"},
+    "breast_cancer": {"classes": 2, "input_features": 30, "model_type": "mlp"},
+    "digits": {"classes": 10, "input_features": 64, "model_type": "mlp"},
+    "california_housing": {"classes": 1, "input_features": 8, "model_type": "mlp"},
+    "diabetes": {"classes": 1, "input_features": 10, "model_type": "mlp"},
+    "linnerud": {"classes": 3, "input_features": 3, "model_type": "mlp"},
+    "adult": {"classes": 2, "input_features": 105, "model_type": "mlp"},
+    "german_credit": {"classes": 2, "input_features": 20, "model_type": "mlp"},
+    "bank_marketing": {"classes": 2, "input_features": 16, "model_type": "mlp"},
+    "credit_card_default": {"classes": 2, "input_features": 23, "model_type": "mlp"},
+    "phishing": {"classes": 2, "input_features": 30, "model_type": "mlp"},
+    "uci_isolet": {"classes": 26, "input_features": 617, "model_type": "mlp"},
+    "uci_epileptic": {"classes": 5, "input_features": 178, "model_type": "mlp"},
+
+    # Kaggle datasets
+    "kaggle_credit": {"classes": 2, "input_features": 23, "model_type": "mlp"},
+    "kaggle_cardio": {"classes": 2, "input_features": 11, "model_type": "mlp"},
+    "kaggle_cervical": {"classes": 2, "input_features": 30, "model_type": "mlp"},
+    "food": {"classes": 101, "input_features": 3 * 224 * 224, "model_type": "cnn"},
+}
+
+
+def assign_pp_values(
+    pp_budgets,
+    values,
+):
+    r"""
+    Assigns a value to each data point according to the given per-point budgets.
+    Args:
+        pp_budgets: the privacy budget's epsilon for each data point
+        values: list of values to be assigned to all data points
+    Returns:
+        An array of size equal to the training dataset size that contains one
+        value for each data point.
+    """
+    pp_values = np.zeros(len(pp_budgets))
+    for i, budget in enumerate(np.sort(np.unique(pp_budgets))):
+        pp_values[pp_budgets == budget] = values[i]
+    return torch.Tensor(pp_values)
+
+
+def generate_string(list1, list2, sep1=": ", sep2=","):
+    if len(list1) != len(list2):
+        raise ValueError("Lists must be of the same length.")
+    return sep2.join(f"{k}{sep1}{v}" for k, v in zip(list1, list2))#
 
 
 def extend_dict(dict1, dict2):
@@ -117,7 +143,8 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/adult.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_4.yaml')
+    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='clipping')
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
     config = load_yaml_args(args.exp_yaml)
@@ -132,7 +159,7 @@ def parse_args_with_yaml():
     return argparse.Namespace(**config)
 
 
-def train_loop(params, model, train_loader, criterion, optimizer, sched, device, epochs, privacy_engine=None):
+def train_loop(params, model, train_loader, criterion, optimizer, sched, device, epochs, pp_max_grad_norms=None):
     """
     Generic training loop for PyTorch models, compatible with Opacus-privatized models.
 
@@ -150,48 +177,60 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
     disable_inner = params.disable_inner if hasattr(params, 'disable_inner') else params.get('disable_inner', False)
     for epoch in range(epochs):
         running_loss = 0.0
-        for inputs, targets in train_loader:
+        correct = 0
+        total = 0
+
+        for batch in train_loader:
+            if len(batch) == 2:
+                inputs, targets = batch
+                idx = None
+            elif len(batch) == 3:
+                inputs, targets, idx = batch
+            else:
+                raise Exception("Batch must have 2 or 3 elements (inputs, targets, [idx])")
             inputs, targets = inputs.to(device), targets.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
-            optimizer.step()
+            if idx == None:
+                optimizer.step()
+            else:
+                optimizer.step(pp_max_grad_norms=pp_max_grad_norms[idx].to(device))
+
             running_loss += loss.item()
+
+            # Compute batch accuracy
+            _, predicted = outputs.max(1)
+            correct += (predicted == targets).sum().item()
+            total += targets.size(0)
+
         if sched is not None:
             sched.step()
+
         avg_loss = running_loss / len(train_loader)
+        accuracy = 100.0 * correct / total
+
         if not disable_inner:
-            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.15f}")
+            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.6f} - Accuracy: {accuracy:.2f}%")
+
     return model
 
 
-def download_kaggle_dataset(dataset_name, dataset_slug, root):
+def download_kaggle_dataset(dataset_slug, root):
     """
     Downloads a Kaggle dataset using Kaggle API if not already present.
     dataset_slug example: "mlg-ulb/creditcardfraud"
     """
-    dataset_dir = os.path.join(root, dataset_name)
-    os.makedirs(dataset_dir, exist_ok=True)
-
-    # Check if already downloaded
-    if any(fname.endswith(".csv") for fname in os.listdir(dataset_dir)):
-        print(f"[INFO] {dataset_name} dataset already exists.")
-        return dataset_dir
-
-    print(f"[INFO] Downloading {dataset_name} from Kaggle...")
-    cmd = ["kaggle", "datasets", "download", "-d", dataset_slug, "-p", dataset_dir]
-    subprocess.run(cmd, check=True)
-
-    # Extract if ZIP
-    for file in os.listdir(dataset_dir):
-        if file.endswith(".zip"):
-            with zipfile.ZipFile(os.path.join(dataset_dir, file), 'r') as zip_ref:
-                zip_ref.extractall(dataset_dir)
-            os.remove(os.path.join(dataset_dir, file))
+    os.environ["KAGGLEHUB_CACHE"] = root
+    dataset_dir = kagglehub.dataset_download(dataset_slug)
     return dataset_dir
 
 def preprocess_tabular(df, target_col):
+    rng = np.random.default_rng(42)
+    shuffled_indices = rng.permutation(df.index)
+    df = df.iloc[shuffled_indices].reset_index(drop=True)
     y = df[target_col].values
     X = df.drop(columns=[target_col])
 
@@ -212,10 +251,12 @@ def preprocess_tabular(df, target_col):
     X_final = np.column_stack(X_processed)
 
     # Encode target if categorical
-    if isinstance(y[0], str) or isinstance(y[0], bool):
+    if isinstance(y[0], str): 
+        y = [int(x) for x in y]
+    if isinstance(y[0], bool):
         y_lb = LabelBinarizer()
         y = y_lb.fit_transform(y).ravel()
-
+    y = np.array(y) - min(np.array(y))  # Ensure targets start from 0
     return X_final, y
 
 def load_dataset(name, root='./data', train=True, transform=None, download=True):
@@ -242,50 +283,70 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     elif name.lower() == 'mnist_4':
         if transform is None:
             transform = transforms.ToTensor()
-        full_dataset = MNIST(root=root, train=True, transform=transform, download=download)
+        full_dataset = MNIST(root=root, train=train, transform=transform, download=download)
+        if train:
+            X_tensor = full_dataset.train_data / 256.0
+            y_tensor = full_dataset.train_labels
+        else:
+            X_tensor = full_dataset.test_data / 256.0
+            y_tensor = full_dataset.test_labels
         # Get indices for class 0 and class 1, 2, 3
-        targets = np.array(full_dataset.targets)
-        idx_0 = np.where(targets == 0)[0][:1000]
-        idx_1 = np.where(targets == 1)[0][:1000]
-        idx_2 = np.where(targets == 2)[0][:1000]
-        idx_3 = np.where(targets == 3)[0][:1000]
+        idx_0 = np.where(y_tensor == 0)[0][:1000]
+        idx_1 = np.where(y_tensor == 1)[0][:1000]
+        idx_2 = np.where(y_tensor == 2)[0][:1000]
+        idx_3 = np.where(y_tensor == 3)[0][:1000]
         selected_idx = np.concatenate([idx_0, idx_1, idx_2, idx_3])
+        rng = np.random.default_rng(seed=42)
+        rng.shuffle(selected_idx)
         # Subset the dataset
-        dataset = Subset(full_dataset, selected_idx)
+        X_tensor = X_tensor[selected_idx]
+        y_tensor = y_tensor[selected_idx]
         # Overwrite targets attribute for compatibility
-        dataset.targets = torch.tensor(targets[selected_idx])
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'mnist_2':
         if transform is None:
             transform = transforms.ToTensor()
-        full_dataset = MNIST(root=root, train=True, transform=transform, download=download)
+        full_dataset = MNIST(root=root, train=train, transform=transform, download=download)
+        if train:
+            X_tensor = full_dataset.train_data / 256.0
+            y_tensor = full_dataset.train_labels
+        else:
+            X_tensor = full_dataset.test_data / 256.0
+            y_tensor = full_dataset.test_labels
         # Get indices for class 0 and class 1
-        targets = np.array(full_dataset.targets)
-        idx_0 = np.where(targets == 0)[0][:100]
-        idx_1 = np.where(targets == 1)[0][:100]
+        idx_0 = np.where(y_tensor == 0)[0][:100]
+        idx_1 = np.where(y_tensor == 1)[0][:100]
         selected_idx = np.concatenate([idx_0, idx_1])
         rng = np.random.default_rng(seed=42)
         rng.shuffle(selected_idx)
         # Subset the dataset
-        dataset = Subset(full_dataset, selected_idx)
+        X_tensor = X_tensor[selected_idx]
+        y_tensor = y_tensor[selected_idx]
         # Overwrite targets attribute for compatibility
-        dataset.targets = torch.tensor(targets[selected_idx])
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'mnist_4_small':
         if transform is None:
             transform = transforms.ToTensor()
-        full_dataset = MNIST(root=root, train=True, transform=transform, download=download)
+        full_dataset = MNIST(root=root, train=train, transform=transform, download=download)
+        if train:
+            X_tensor = full_dataset.train_data / 256.0
+            y_tensor = full_dataset.train_labels
+        else:
+            X_tensor = full_dataset.test_data / 256.0
+            y_tensor = full_dataset.test_labels
         # Get indices for class 0 and class 1
-        targets = np.array(full_dataset.targets)
-        idx_0 = np.where(targets == 0)[0][:50]
-        idx_1 = np.where(targets == 1)[0][:50]
-        idx_2 = np.where(targets == 2)[0][:50]
-        idx_3 = np.where(targets == 3)[0][:50]
+        idx_0 = np.where(y_tensor == 0)[0][:50]
+        idx_1 = np.where(y_tensor == 1)[0][:50]
+        idx_2 = np.where(y_tensor == 2)[0][:50]
+        idx_3 = np.where(y_tensor == 3)[0][:50]
         selected_idx = np.concatenate([idx_0, idx_1, idx_2, idx_3])
         rng = np.random.default_rng(seed=42)
         rng.shuffle(selected_idx)
         # Subset the dataset
-        dataset = Subset(full_dataset, selected_idx)
+        X_tensor = X_tensor[selected_idx]
+        y_tensor = y_tensor[selected_idx]
         # Overwrite targets attribute for compatibility
-        dataset.targets = torch.tensor(targets[selected_idx])
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'cifar10':
         if transform is None:
             transform = transforms.ToTensor()
@@ -389,47 +450,49 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     elif name.lower() == "uci_isolet":
         data = fetch_openml("isolet", version=1, as_frame=True, data_home=root)
         df = data.frame
-        target_col = "letter"
+        target_col = "class"
         test_size = 1500 / 7800
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
             X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
+            y_tensor = torch.from_numpy(y_train).long() - 1
         else:
             X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
+            y_tensor = torch.from_numpy(y_test).long() - 1
 
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
-
-    elif name.lower() == "uci_epileptic":
-        data = fetch_openml("Epileptic Seizure Recognition", version=1, as_frame=True, data_home=root)
-        df = data.frame
-        target_col = "y"
-        test_size = 0.2
-        X_final, y = preprocess_tabular(df, target_col)
-
-        # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
-        X_train, X_test = X_final[train_idx], X_final[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if train:
-            X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
-        else:
-            X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     # ===================
     # Kaggle datasets
     # ===================
+    elif name.lower() == "uci_epileptic":
+        dataset_dir = download_kaggle_dataset("harunshimanto/epileptic-seizure-recognition", root)
+        file_path = os.path.join(dataset_dir, "Epileptic Seizure Recognition.csv")  # check the file name after unzip
+        df = pd.read_csv(file_path)
+        df = df.drop(columns=["Unnamed"])
+        target_col = "y"
+        test_size = 0.2
+        X_final, y = preprocess_tabular(df, target_col)
+
+        # Train/test split
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
+        X_train, X_test = X_final[train_idx], X_final[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        if train:
+            X_tensor = torch.from_numpy(X_train).float()
+            y_tensor = torch.from_numpy(y_train).long()
+        else:
+            X_tensor = torch.from_numpy(X_test).float()
+            y_tensor = torch.from_numpy(y_test).long()
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+
     elif name.lower() == "kaggle_credit":
-        dataset_dir = download_kaggle_dataset("kaggle_credit", "mlg-ulb/creditcardfraud", root)
+        dataset_dir = download_kaggle_dataset("mlg-ulb/creditcardfraud", root)
         file_path = os.path.join(dataset_dir, "creditcard.csv")
         df = pd.read_csv(file_path)
         target_col = "Class"
@@ -437,7 +500,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -449,7 +512,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "kaggle_cardio":
-        dataset_dir = download_kaggle_dataset("kaggle_cardio", "sulianova/cardiovascular-disease-dataset", root)
+        dataset_dir = download_kaggle_dataset("sulianova/cardiovascular-disease-dataset", root)
         file_path = os.path.join(dataset_dir, "cardio_train.csv")
         df = pd.read_csv(file_path, sep=";")
         target_col = "cardio"
@@ -457,7 +520,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -469,7 +532,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "kaggle_cervical":
-        dataset_dir = download_kaggle_dataset("kaggle_cervical", "camnugent/cervical-cancer-risk-classification", root)
+        dataset_dir = download_kaggle_dataset("camnugent/cervical-cancer-risk-classification", root)
         file_path = os.path.join(dataset_dir, "risk_factors_cervical_cancer.csv")
         df = pd.read_csv(file_path)
         target_col = "Biopsy"
@@ -477,7 +540,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -489,7 +552,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "food":
-        dataset_dir = download_kaggle_dataset("food", "kaggle/food-orders", root)
+        dataset_dir = download_kaggle_dataset("kaggle/food-orders", root)
         file_path = os.path.join(dataset_dir, "orders.csv")
         df = pd.read_csv(file_path)
         target_col = "order_status"
@@ -497,7 +560,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -509,7 +572,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "apple":
-        dataset_dir = download_kaggle_dataset("apple", "emmarex/plantdisease", root)
+        dataset_dir = download_kaggle_dataset("emmarex/plantdisease", root)
         file_path = os.path.join(dataset_dir, "Apple Quality.csv")
         df = pd.read_csv(file_path)
         target_col = "quality"
@@ -517,7 +580,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -529,7 +592,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "shipping":
-        dataset_dir = download_kaggle_dataset("shipping", "kaggle/shipping-dataset", root)
+        dataset_dir = download_kaggle_dataset("kaggle/shipping-dataset", root)
         file_path = os.path.join(dataset_dir, "shipping.csv")
         df = pd.read_csv(file_path)
         target_col = "Delivery_Status"
@@ -537,7 +600,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=rng.integers(1e9))
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
         X_train, X_test = X_final[train_idx], X_final[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
@@ -564,6 +627,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     else:
         raise ValueError(f"Dataset {name} not supported.")
 
+    print(f"highest class {torch.max(y_tensor)}")
     return dataset
 
 import torch.nn as nn
@@ -583,53 +647,13 @@ def load_model(dataset_name, model_name=None, num_classes=None):
 
     dataset_name = dataset_name.lower()
     # Infer number of classes if not provided
-    if num_classes is None:
-        if dataset_name in ['mnist', 'fashionmnist']:
-            num_classes = 10
-        elif dataset_name == 'cifar10':
-            num_classes = 10
-        elif dataset_name == 'svhn':
-            num_classes = 10
-        elif dataset_name == 'iris':
-            num_classes = 3
-        elif dataset_name == 'wine':
-            num_classes = 3
-        elif dataset_name in ['mnist_4', "mnist_4_small"]:
-            num_classes = 4 #2
-        elif dataset_name in ['breast_cancer', 'mnist_2', "adult"]:
-            num_classes = 2
-        else:
-            raise ValueError(f"Unknown dataset: {dataset_name}")
-
-    # Default model selection
-    if model_name is None:
-        if dataset_name in ['mnist', 'fashionmnist', 'mnist_4', "mnist_4_small", 'mnist_2']:
-            model_name = 'mlp'
-        elif dataset_name in ['cifar10', 'svhn']:
-            model_name = 'simple_cnn'
-        elif dataset_name in ['iris', 'wine', 'breast_cancer']:
-            model_name = 'mlp'
-        elif dataset_name in ["adult"]:
-            model_name = 'mlp'
-        else:
-            raise ValueError(f"No default model for dataset: {dataset_name}")
+    num_classes = datasets_info[dataset_name]["classes"] 
+    model_name = datasets_info[dataset_name]["model_type"] 
+    input_dim = datasets_info[dataset_name]["input_features"]
+    
 
     # Model definitions
     if model_name.lower() == 'mlp':
-        # For tabular or flattened image data
-        if dataset_name in ['mnist', 'fashionmnist', 'mnist_4', "mnist_4_small", 'mnist_2']:
-            input_dim = 28 * 28
-        elif dataset_name == 'iris':
-            input_dim = 4
-        elif dataset_name == 'wine':
-            input_dim = 13
-        elif dataset_name == 'breast_cancer':
-            input_dim = 30
-        elif dataset_name in ["adult"]:
-            input_dim = 105
-        else:
-            raise ValueError(f"MLP input dim unknown for dataset: {dataset_name}")
-
         model = nn.Sequential(
             nn.Flatten(),
             nn.Linear(input_dim, 128),
@@ -638,53 +662,44 @@ def load_model(dataset_name, model_name=None, num_classes=None):
             nn.ReLU(),
             nn.Linear(64, num_classes)
         )
+    elif model_name.lower() == 'large_mlp':
+        model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_dim, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_classes)
+        )
     elif model_name.lower() == 'simple_cnn':
-        # For small images (CIFAR10, SVHN)
-        if dataset_name in ['cifar10', 'svhn']:
-            in_channels = 3
-        elif dataset_name in ['mnist', 'fashionmnist']:
-            in_channels = 1
-        else:
-            raise ValueError(f"Simple CNN input channels unknown for dataset: {dataset_name}")
 
         model = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+            nn.Conv2d(input_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Flatten(),
-            nn.Linear(64 * 7 * 7 if in_channels == 1 else 64 * 8 * 8, 128),
+            nn.Linear(64 * 7 * 7 if input_dim == 1 else 64 * 8 * 8, 128),
             nn.ReLU(),
             nn.Linear(128, num_classes)
         )
     elif model_name.lower() == 'resnet18':
         # Use torchvision's ResNet18 for small images
-        if dataset_name in ['cifar10', 'svhn']:
-            in_channels = 3
-        elif dataset_name in ['mnist', 'fashionmnist']:
-            in_channels = 1
-        else:
-            raise ValueError(f"Small ResNet not supported for dataset: {dataset_name}")
 
-        model = resnet18(num_classes=num_classes)
+        model = resnet18(num_classes=input_dim)
         # Adjust input conv layer if needed
-        if in_channels != 3:
-            model.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        if input_dim != 3:
+            model.conv1 = nn.Conv2d(input_dim, 64, kernel_size=7, stride=2, padding=3, bias=False)
     elif model_name.lower() == 'small_vgg' or model_name.lower() == 'vgg':
-        # Use torchvision's VGG for small images
-        if dataset_name in ['cifar10', 'svhn']:
-            in_channels = 3
-        elif dataset_name in ['mnist', 'fashionmnist']:
-            in_channels = 1
-        else:
-            raise ValueError(f"VGG not supported for dataset: {dataset_name}")
 
-        model = vgg11(num_classes=num_classes)
+        model = vgg11(num_classes=input_dim)
         # Adjust input conv layer if needed
-        if in_channels != 3:
-            model.features[0] = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
+        if input_dim != 3:
+            model.features[0] = nn.Conv2d(input_dim, 64, kernel_size=3, padding=1)
     else:
         raise ValueError(f"Model {model_name} not supported.")
 
