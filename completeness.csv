@@ -1,0 +1,46 @@
+Dataset,Experiment,Seed,# Target Subfolders,# Models,bti.npy,keep.npy,logits.npy,model.pt,scores.npy,adv.npy,integrals.npy,num_steps_list.npy,samplewise_auc_R.npy,samplewise_auc.npy,Tasks
+adult,adult_[10_80]_[08_019999999999999996],1,253,253,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+adult,adult_[10_80]_[08_019999999999999996],2,253,253,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+adult,adult_[10_80]_[08_019999999999999996],3,253,253,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+adult,adult_[10_80]_[08_019999999999999996],4,253,253,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+adult,adult_[10_80]_[08_019999999999999996],5,253,253,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+breast_cancer,breast_cancer_[10_100]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+breast_cancer,breast_cancer_[10_100]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+breast_cancer,breast_cancer_[10_100]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+breast_cancer,breast_cancer_[10_100]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+breast_cancer,breast_cancer_[10_100]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+credit_card_default,credit_card_default_[10_200]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+credit_card_default,credit_card_default_[10_200]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+credit_card_default,credit_card_default_[10_200]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+credit_card_default,credit_card_default_[10_200]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+credit_card_default,credit_card_default_[10_200]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+german_credit,german_credit_[10_100]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+german_credit,german_credit_[10_100]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+german_credit,german_credit_[10_100]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+german_credit,german_credit_[10_100]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+german_credit,german_credit_[10_100]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+kaggle_cervical,kaggle_cervical_[10_300]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+kaggle_cervical,kaggle_cervical_[10_300]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+kaggle_cervical,kaggle_cervical_[10_300]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+kaggle_cervical,kaggle_cervical_[10_300]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+kaggle_cervical,kaggle_cervical_[10_300]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist,mnist_[10_80]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist,mnist_[10_80]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist,mnist_[10_80]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist,mnist_[10_80]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist,mnist_[10_80]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+mnist_4,mnist_4_[160_500]_[06_04],1,280,280,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+mnist_4,mnist_4_[160_500]_[06_04],2,281,281,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+mnist_4,mnist_4_[160_500]_[06_04],3,280,280,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+mnist_4,mnist_4_[160_500]_[06_04],4,280,280,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+mnist_4,mnist_4_[160_500]_[06_04],5,280,280,100.0%,100.0%,0.0%,100.0%,0.0%,✗,✗,✗,✗,✗,"save_logits, save_scores, save_stats"
+uci_isolet,uci_isolet_[10_100]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_100]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_100]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_100]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_100]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_50]_[02_08],1,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_50]_[02_08],2,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_50]_[02_08],3,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_50]_[02_08],4,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats
+uci_isolet,uci_isolet_[10_50]_[02_08],5,Missing,0,-,-,-,-,-,✗,✗,✗,✗,✗,save_stats

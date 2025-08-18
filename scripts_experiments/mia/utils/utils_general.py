@@ -5,16 +5,17 @@ import argparse
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from torch.utils.data import Subset
 from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, SVHN
 from torchvision import transforms
 from torchvision.models import resnet18, vgg11
 from opacus_new import PrivacyEngine
-from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, fetch_california_housing, load_diabetes, load_linnerud, fetch_openml
+from sklearn.datasets import load_iris, load_wine, load_breast_cancer, fetch_california_housing, fetch_openml
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelBinarizer, MinMaxScaler
 import kagglehub
+from collections import defaultdict
+from sklearn.preprocessing import LabelEncoder
 
 datasets_info = {
     # Vision datasets
@@ -27,26 +28,18 @@ datasets_info = {
     "svhn": {"classes": 10, "input_features": 1, "model_type": "simple_cnn"},
 
     # Tabular datasets (sklearn & OpenML)
-    "iris": {"classes": 3, "input_features": 4, "model_type": "mlp"},
-    "wine": {"classes": 3, "input_features": 13, "model_type": "mlp"},
     "breast_cancer": {"classes": 2, "input_features": 30, "model_type": "mlp"},
-    "digits": {"classes": 10, "input_features": 64, "model_type": "mlp"},
-    "california_housing": {"classes": 1, "input_features": 8, "model_type": "mlp"},
-    "diabetes": {"classes": 1, "input_features": 10, "model_type": "mlp"},
-    "linnerud": {"classes": 3, "input_features": 3, "model_type": "mlp"},
     "adult": {"classes": 2, "input_features": 105, "model_type": "mlp"},
-    "german_credit": {"classes": 2, "input_features": 20, "model_type": "mlp"},
+    "german_credit": {"classes": 2, "input_features": 59, "model_type": "mlp"},
     "bank_marketing": {"classes": 2, "input_features": 16, "model_type": "mlp"},
-    "credit_card_default": {"classes": 2, "input_features": 23, "model_type": "mlp"},
-    "phishing": {"classes": 2, "input_features": 30, "model_type": "mlp"},
+    "credit_card_default": {"classes": 2, "input_features": 59, "model_type": "mlp"},
     "uci_isolet": {"classes": 26, "input_features": 617, "model_type": "mlp"},
-    "uci_epileptic": {"classes": 5, "input_features": 178, "model_type": "mlp"},
 
     # Kaggle datasets
-    "kaggle_credit": {"classes": 2, "input_features": 23, "model_type": "mlp"},
-    "kaggle_cardio": {"classes": 2, "input_features": 11, "model_type": "mlp"},
-    "kaggle_cervical": {"classes": 2, "input_features": 30, "model_type": "mlp"},
-    "food": {"classes": 101, "input_features": 3 * 224 * 224, "model_type": "cnn"},
+    "kaggle_credit": {"classes": 2, "input_features": 25, "model_type": "mlp"},
+    "kaggle_cervical": {"classes": 2, "input_features": 32, "model_type": "mlp"},
+    "compas": {"classes": 2, "input_features": 24, "model_type": "mlp"},
+    
 }
 
 
@@ -143,7 +136,7 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/mnist_4.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/adult.yaml')
     parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='clipping')
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
@@ -170,15 +163,19 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
         optimizer: Optimizer.
         device: Device to train on ('cpu' or 'cuda').
         epochs: Number of epochs to train.
-        privacy_engine: Optional Opacus PrivacyEngine (for DP training).
+        pp_max_grad_norms: Optional per-sample max grad norms for Opacus DP training.
     """
     model.to(device)
     model.train()
     disable_inner = params.disable_inner if hasattr(params, 'disable_inner') else params.get('disable_inner', False)
+
     for epoch in range(epochs):
         running_loss = 0.0
         correct = 0
         total = 0
+
+        class_correct = defaultdict(int)
+        class_total = defaultdict(int)
 
         for batch in train_loader:
             if len(batch) == 2:
@@ -188,13 +185,15 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
                 inputs, targets, idx = batch
             else:
                 raise Exception("Batch must have 2 or 3 elements (inputs, targets, [idx])")
+
             inputs, targets = inputs.to(device), targets.to(device)
 
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
-            if idx == None:
+
+            if idx is None:
                 optimizer.step()
             else:
                 optimizer.step(pp_max_grad_norms=pp_max_grad_norms[idx].to(device))
@@ -206,6 +205,12 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
             correct += (predicted == targets).sum().item()
             total += targets.size(0)
 
+            # Update per-class accuracy
+            for label, prediction in zip(targets, predicted):
+                class_total[label.item()] += 1
+                if prediction.item() == label.item():
+                    class_correct[label.item()] += 1
+
         if sched is not None:
             sched.step()
 
@@ -213,7 +218,15 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
         accuracy = 100.0 * correct / total
 
         if not disable_inner:
-            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.6f} - Accuracy: {accuracy:.2f}%")
+            # Report per-class accuracy
+            string = ""
+            class_ids = sorted(class_total.keys())
+            for cls in class_ids:
+                acc = 100.0 * class_correct[cls] / class_total[cls] if class_total[cls] > 0 else 0.0
+                string += f"    Class {cls}: Accuracy: {acc:.2f}% ({class_correct[cls]}/{class_total[cls]})"
+            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.6f} - Accuracy: {accuracy:.2f}%  {string}")
+
+
 
     return model
 
@@ -227,7 +240,7 @@ def download_kaggle_dataset(dataset_slug, root):
     dataset_dir = kagglehub.dataset_download(dataset_slug)
     return dataset_dir
 
-def preprocess_tabular(df, target_col):
+def preprocess_tabular(df, target_col, bin=True):
     rng = np.random.default_rng(42)
     shuffled_indices = rng.permutation(df.index)
     df = df.iloc[shuffled_indices].reset_index(drop=True)
@@ -237,11 +250,18 @@ def preprocess_tabular(df, target_col):
     X_processed = []
     for col in X.columns:
         if X[col].dtype == "object" or X[col].dtype.name == "category":
-            lb = LabelBinarizer()
-            transformed = lb.fit_transform(X[col])
-            if transformed.shape[1] == 1:  # binary
-                X_processed.append(transformed.ravel())
-            else:  # multi-class
+            if bin:
+                lb = LabelBinarizer()
+                transformed = lb.fit_transform(X[col])
+                if transformed.shape[1] == 1:  # binary
+                    X_processed.append(transformed.ravel())
+                else:  # multi-class
+                    X_processed.append(transformed)
+            else:
+                le = LabelEncoder()
+                scaler = MinMaxScaler()
+                transformed = le.fit_transform(X[col]).reshape(-1, 1)
+                transformed = scaler.fit_transform(transformed).reshape(-1, 1)
                 X_processed.append(transformed)
         else:
             scaler = MinMaxScaler()
@@ -252,11 +272,16 @@ def preprocess_tabular(df, target_col):
 
     # Encode target if categorical
     if isinstance(y[0], str): 
-        y = [int(x) for x in y]
+        try:
+            y = [int(x) for x in y]
+        except Exception as _:
+            le = LabelEncoder()
+            y = le.fit_transform(y)
     if isinstance(y[0], bool):
         y_lb = LabelBinarizer()
         y = y_lb.fit_transform(y).ravel()
     y = np.array(y) - min(np.array(y))  # Ensure targets start from 0
+    X_final[np.isnan(X_final)] = np.take(np.nanmean(X_final, axis=0), np.where(np.isnan(X_final))[1])
     return X_final, y
 
 def load_dataset(name, root='./data', train=True, transform=None, download=True):
@@ -361,41 +386,21 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         split = 'train' if train else 'test'
         dataset = SVHN(root=root, split=split, transform=transform, download=download)
     # Tabular datasets (example: Iris, Wine, BreastCancer from sklearn)
-    elif name.lower() == 'iris':
-        iris = load_iris()
-        X = torch.tensor(iris.data, dtype=torch.float32)
-        y = torch.tensor(iris.target, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'wine':
-        wine = load_wine()
-        X = torch.tensor(wine.data, dtype=torch.float32)
-        y = torch.tensor(wine.target, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X, y)
     elif name.lower() == 'breast_cancer':
         bc = load_breast_cancer()
-        X = torch.tensor(bc.data, dtype=torch.float32)
-        y = torch.tensor(bc.target, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'digits':
-        digits = load_digits()
-        X = torch.tensor(digits.data, dtype=torch.float32)
-        y = torch.tensor(digits.target, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'california_housing':
-        housing = fetch_california_housing()
-        X = torch.tensor(housing.data, dtype=torch.float32)
-        y = torch.tensor(housing.target, dtype=torch.float32)
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'diabetes':
-        diabetes = load_diabetes()
-        X = torch.tensor(diabetes.data, dtype=torch.float32)
-        y = torch.tensor(diabetes.target, dtype=torch.float32)
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'linnerud':
-        linnerud = load_linnerud()
-        X = torch.tensor(linnerud.data, dtype=torch.float32)
-        y = torch.tensor(linnerud.target, dtype=torch.float32)
-        dataset = torch.utils.data.TensorDataset(X, y)
+        X_final = torch.tensor(bc.data, dtype=torch.float32)
+        y = torch.tensor(bc.target, dtype=torch.float32)
+        test_size = 0.2
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
+        X_train, X_test = X_final[train_idx], X_final[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        if train:
+            X_tensor = X_train.float()
+            y_tensor = y_train.long()
+        else:
+            X_tensor = X_test.float()
+            y_tensor = y_test.long()
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'adult':
         # Load with as_frame=True for easier preprocessing
         adult = fetch_openml(name='adult', version=2, as_frame=True, data_home=root)
@@ -428,25 +433,65 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
 
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'german_credit':
-        german = fetch_openml(name='credit-g', version=1, as_frame=False, data_home=root)
-        X = torch.tensor(german.data.astype(np.float32))
-        y = torch.tensor(german.target.astype(np.int64))
-        dataset = torch.utils.data.TensorDataset(X, y)
-    elif name.lower() == 'bank_marketing':
-        bank = fetch_openml(name='BankMarketing', version=1, as_frame=False, data_home=root)
-        X = torch.tensor(bank.data.astype(np.float32))
-        y = torch.tensor((bank.target == 'yes').astype(np.int64))
-        dataset = torch.utils.data.TensorDataset(X, y)
+        german = fetch_openml(name='credit-g', version=1, as_frame=True, data_home=root)
+        df = german.data
+        y = german.target
+        df["target"] = y
+        target_col = "target"
+        test_size = 0.1
+        X_final, y = preprocess_tabular(df, target_col)
+
+        # Train/test split
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
+        X_train, X_test = X_final[train_idx], X_final[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        if train:
+            X_tensor = torch.from_numpy(X_train).float()
+            y_tensor = torch.from_numpy(y_train).long()
+        else:
+            X_tensor = torch.from_numpy(X_test).float()
+            y_tensor = torch.from_numpy(y_test).long()
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'credit_card_default':
-        cc = fetch_openml(name='credit-g', version=1, as_frame=False, data_home=root)
-        X = torch.tensor(cc.data.astype(np.float32))
-        y = torch.tensor(cc.target.astype(np.int64))
-        dataset = torch.utils.data.TensorDataset(X, y)
+        cc = fetch_openml(name='credit-g', version=1, as_frame=True, data_home=root)
+        df = cc.data
+        y = cc.target
+        df["target"] = y
+        target_col = "target"
+        test_size = 0.1
+        X_final, y = preprocess_tabular(df, target_col)
+
+        # Train/test split
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
+        X_train, X_test = X_final[train_idx], X_final[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        if train:
+            X_tensor = torch.from_numpy(X_train).float()
+            y_tensor = torch.from_numpy(y_train).long()
+        else:
+            X_tensor = torch.from_numpy(X_test).float()
+            y_tensor = torch.from_numpy(y_test).long()
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'phishing':
         phishing = fetch_openml(name='Phishing', version=1, as_frame=False, data_home=root)
-        X = torch.tensor(phishing.data.astype(np.float32))
-        y = torch.tensor(phishing.target.astype(np.int64))
-        dataset = torch.utils.data.TensorDataset(X, y)
+        df = phishing.data
+        y = phishing.target
+        df["target"] = y
+        target_col = "target"
+        test_size = 0.1
+        X_final, y = preprocess_tabular(df, target_col)
+
+        # Train/test split
+        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
+        X_train, X_test = X_final[train_idx], X_final[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        if train:
+            X_tensor = torch.from_numpy(X_train).float()
+            y_tensor = torch.from_numpy(y_train).long()
+        else:
+            X_tensor = torch.from_numpy(X_test).float()
+            y_tensor = torch.from_numpy(y_test).long()
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == "uci_isolet":
         data = fetch_openml("isolet", version=1, as_frame=True, data_home=root)
         df = data.frame
@@ -470,32 +515,12 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     # ===================
     # Kaggle datasets
     # ===================
-    elif name.lower() == "uci_epileptic":
-        dataset_dir = download_kaggle_dataset("harunshimanto/epileptic-seizure-recognition", root)
-        file_path = os.path.join(dataset_dir, "Epileptic Seizure Recognition.csv")  # check the file name after unzip
-        df = pd.read_csv(file_path)
-        df = df.drop(columns=["Unnamed"])
-        target_col = "y"
-        test_size = 0.2
-        X_final, y = preprocess_tabular(df, target_col)
-
-        # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
-        X_train, X_test = X_final[train_idx], X_final[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if train:
-            X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
-        else:
-            X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "kaggle_credit":
-        dataset_dir = download_kaggle_dataset("mlg-ulb/creditcardfraud", root)
-        file_path = os.path.join(dataset_dir, "creditcard.csv")
+        dataset_dir = download_kaggle_dataset("laotse/credit-risk-dataset", root)
+        file_path = os.path.join(dataset_dir, "credit_risk_dataset.csv")
         df = pd.read_csv(file_path)
-        target_col = "Class"
+        target_col = "loan_status"
         test_size = 10000 / len(df)
         X_final, y = preprocess_tabular(df, target_col)
 
@@ -511,32 +536,14 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
             y_tensor = torch.from_numpy(y_test).long()
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
-    elif name.lower() == "kaggle_cardio":
-        dataset_dir = download_kaggle_dataset("sulianova/cardiovascular-disease-dataset", root)
-        file_path = os.path.join(dataset_dir, "cardio_train.csv")
-        df = pd.read_csv(file_path, sep=";")
-        target_col = "cardio"
-        test_size = 14000 / len(df)
-        X_final, y = preprocess_tabular(df, target_col)
-
-        # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
-        X_train, X_test = X_final[train_idx], X_final[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if train:
-            X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
-        else:
-            X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
-
     elif name.lower() == "kaggle_cervical":
-        dataset_dir = download_kaggle_dataset("camnugent/cervical-cancer-risk-classification", root)
-        file_path = os.path.join(dataset_dir, "risk_factors_cervical_cancer.csv")
+        dataset_dir = download_kaggle_dataset("loveall/cervical-cancer-risk-classification", root)
+        file_path = os.path.join(dataset_dir, "kag_risk_factors_cervical_cancer.csv")
         df = pd.read_csv(file_path)
+        df = df.replace("?", np.nan).astype(float).apply(lambda col: col.fillna(col.mean()))
         target_col = "Biopsy"
-        test_size = 150 / len(df)
+        df = df.drop(columns=["Hinselmann", "Schiller", "Citology"])
+        test_size = 150
         X_final, y = preprocess_tabular(df, target_col)
 
         # Train/test split
@@ -550,54 +557,37 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
             X_tensor = torch.from_numpy(X_test).float()
             y_tensor = torch.from_numpy(y_test).long()
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+    elif name.lower() == "compas":
+        # dataset_dir = download_kaggle_dataset("danofer/compass", root)
+        # file_path = os.path.join(dataset_dir, "compas-scores-raw.csv")
+        df = pd.read_csv("https://raw.githubusercontent.com/propublica/compas-analysis/master/compas-scores-two-years.csv")
+        drop_cols = [
+            "name", "first", "last", "compas_screening_date", "dob", "age_cat",
+            "decile_score", "score_text", "v_decile_score", "v_score_text",
+            "v_type_of_assessment", "type_of_assessment", "screening_date",
+            "assessment_id", "case_id", "is_recid", "r_case_number", "c_case_number",
+            "c_offense_date", "c_arrest_date", "c_jail_in", "c_jail_out", "start", "end",
+            "in_custody", "out_custody", "days_in_jail", "id", "violent_recid",
+            "v_screening_date", "v_assessment_id", "v_charge_desc", "v_charge_degree",
+            "r_charge_desc"
+        ]
 
-    elif name.lower() == "food":
-        dataset_dir = download_kaggle_dataset("kaggle/food-orders", root)
-        file_path = os.path.join(dataset_dir, "orders.csv")
-        df = pd.read_csv(file_path)
-        target_col = "order_status"
-        test_size = 88 / len(df)
-        X_final, y = preprocess_tabular(df, target_col)
+        df = df.drop(columns=[col for col in drop_cols if col in df.columns])
 
-        # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
-        X_train, X_test = X_final[train_idx], X_final[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if train:
-            X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
-        else:
-            X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+        # --- Define target ---
+        # Typically used: `two_year_recid` (0 or 1)
+        df = df[df['two_year_recid'].isin([0, 1])]  # filter invalid entries
 
-    elif name.lower() == "apple":
-        dataset_dir = download_kaggle_dataset("emmarex/plantdisease", root)
-        file_path = os.path.join(dataset_dir, "Apple Quality.csv")
-        df = pd.read_csv(file_path)
-        target_col = "quality"
-        test_size = 800 / len(df)
-        X_final, y = preprocess_tabular(df, target_col)
+        # Rename target to 'target_str' as requested
+        df = df.rename(columns={'two_year_recid': 'target_str'})
 
-        # Train/test split
-        train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
-        X_train, X_test = X_final[train_idx], X_final[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if train:
-            X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
-        else:
-            X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
-        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+        # --- Optional: Clean missing values ---
+        df = df.dropna()
+        df = df.reset_index(drop=True)
 
-    elif name.lower() == "shipping":
-        dataset_dir = download_kaggle_dataset("kaggle/shipping-dataset", root)
-        file_path = os.path.join(dataset_dir, "shipping.csv")
-        df = pd.read_csv(file_path)
-        target_col = "Delivery_Status"
-        test_size = 0.2
-        X_final, y = preprocess_tabular(df, target_col)
+        target_col = "target_str"
+        test_size = 0.1
+        X_final, y = preprocess_tabular(df, target_col, bin=False)
 
         # Train/test split
         train_idx, test_idx = train_test_split(np.arange(len(X_final)), test_size=test_size, random_state=42)
@@ -610,6 +600,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
             X_tensor = torch.from_numpy(X_test).float()
             y_tensor = torch.from_numpy(y_test).long()
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+
 
     # ===================
     # Other datasets (manual for now)
@@ -627,7 +618,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     else:
         raise ValueError(f"Dataset {name} not supported.")
 
-    print(f"highest class {torch.max(y_tensor)}")
+    print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
     return dataset
 
 import torch.nn as nn

@@ -17,16 +17,11 @@ from utils.utils_mia import (
     compute_individual_scores   
 )
 from tqdm import tqdm
-from opacus_new import PrivacyEngine
-import threading
-from queue import Queue
 import json
 # --- YAML support ---
 import yaml
 import pickle
-from datetime import datetime
 import torch.multiprocessing as mp
-import concurrent.futures
 import warnings
 from types import SimpleNamespace
 
@@ -48,7 +43,7 @@ def parse_args_with_yaml():
     parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/zz_temp.yaml')
     parser.add_argument('--idx_start', type=int, help='Start index for attackee', default=0)
     parser.add_argument('--idx_end', type=int, help='End index for attackee', default=200)
-    parser.add_argument('--dataset', type=str, help='Dataset to use', default='uci_epileptic')
+    parser.add_argument('--dataset', type=str, help='Dataset to use', default='compas')
     args = parser.parse_args()
 
     # Load config from YAML
@@ -73,7 +68,7 @@ def format_list(lst):
 
 def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, device, lock):
     times_start = time.time()
-    if args.private == True:
+    if args.private:
         dummy_train_ds = load_dataset(args.dataset, train=True)
         size = len(dummy_train_ds)
         budgets_attacker = attacker_budgets
@@ -100,7 +95,6 @@ def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, devi
     previous_train_dl = None
 
     for target_id in range(args.n_targets):
-        time_start_single = time.time()
         seed = target_id  # or use int(time.time() * 1e6) % (2**32) for more randomness
         np.random.seed(seed)
         seeds_out[target_id] = seed
@@ -269,7 +263,7 @@ def worker_mp(args_dict, SR_mp, NM_mp, attackee_idx, lock):
         with open(os.path.join(args.savedir_result, "args.json"), "w") as f:
             json.dump(vars(args), f, indent=2)
         if args.train_and_save_models:
-            _ = train_target_models(args=args, attackee_idx=attackee_idx, attacker_budgets=attacker_budgets, SR_mp=SR_mp, NM_mp=NM_mp, device=device, lock=lock)
+             _ = train_target_models(args=args, attackee_idx=attackee_idx, attacker_budgets=attacker_budgets, SR_mp=SR_mp, NM_mp=NM_mp, device=device, lock=lock)
         if args.test_model:
             test_models(args, args.savedir_target, device)
         if args.compute_and_save_logits:

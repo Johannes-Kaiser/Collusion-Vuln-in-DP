@@ -4,10 +4,8 @@ sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 import os
 import json
 import numpy as np
-import seaborn as sns
 from opacus_new.accountants import RDPAccountant
 import matplotlib as mpl
-from matplotlib.lines import Line2D
 
 
 mpl.rcParams.update({
@@ -30,7 +28,8 @@ def format_list(lst):
     return "_".join(str(x).replace('.', '').replace('-', 'm') for x in lst)
 
 # Example definitions
-base_path = "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_3"
+dataset = "adult"
+base_path = "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_final"
 os.makedirs(f"{base_path}/additional_figures", exist_ok=True)
 budgets = [16.0, 50.0]
 portions_list = [
@@ -39,7 +38,6 @@ portions_list = [
     [0.6, 0.4],
     [0.8, 0.2],
 ]
-dataset = "mnist_4"
 
 all_paths = []
 for portions in portions_list:

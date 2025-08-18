@@ -13,13 +13,14 @@ import warnings
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+import torch.multiprocessing as mp
 from utils.utils_general import (
+    parse_args_with_yaml,
     load_dataset, 
     load_model, 
     save_logits, 
     train_loop, 
     make_private, 
-    parse_args_with_yaml,
     get_dataset_size,
     get_budget_to_index_from_seeds,
     format_list,
@@ -43,11 +44,18 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 
 
-import torch.multiprocessing as mp
 
 def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list):
     # Each process needs its own seed and device context
-    seed = int(time.time() * 1e6) % (2**32)
+    # print(f"starting {target_id}")
+    created_folder = False
+    while not created_folder:
+        seed = int(time.time() * 1e6) % (2**32)
+        savedir = os.path.join(args.savedir_target, str(seed))
+        if os.path.isdir("path/to/folder"):
+            continue
+        else:
+            created_folder = True
     np.random.seed(seed)
     seeds_out[target_id] = seed
     torch.manual_seed(seed)
@@ -127,8 +135,6 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
         args.epochs,
         pp_max_grad_norms
     )
-
-    savedir = os.path.join(args.savedir_target, str(seed))
     os.makedirs(savedir, exist_ok=True)
     np.save(savedir + "/keep.npy", keep_bool)
     torch.save(m.state_dict(), savedir + "/model.pt")
@@ -137,7 +143,7 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
 
 def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
 
-    if args.private == True:
+    if args.private:
         size = get_dataset_size(args.dataset, train=True)
         pp_budgets, budget_to_index = generate_pp_budgets(args.seed, size, portions, args.budgets)
 
@@ -185,9 +191,13 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
     num_steps_list_mp = manager.list([None] * args.n_targets)
 
     train_ds = load_dataset(args.dataset, train=True)#
-
+    try:
+        num_existing_models = sum(os.path.isdir(os.path.join(args.savedir_target, d)) for d in os.listdir(args.savedir_target))
+        targets_to_compute = list(set(range(args.n_targets)) - set(range(num_existing_models)))
+    except FileNotFoundError:#
+        targets_to_compute = list(range(args.n_targets))
     processes = []
-    for target_id in range(args.n_targets):
+    for target_id in targets_to_compute:
         p = ctx.Process(
             target=mp_worker,
             args=(

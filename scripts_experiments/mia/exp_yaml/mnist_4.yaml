@@ -6,7 +6,7 @@ model: null
 lr: 0.01
 batchsize: 128
 epochs: 15
-n_targets: 5
+n_targets: 512
 pkeep: 0.5
 debug: false
 n_queries: 2
