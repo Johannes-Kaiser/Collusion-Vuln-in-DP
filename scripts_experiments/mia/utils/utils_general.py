@@ -9,23 +9,26 @@ from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, SVHN
 from torchvision import transforms
 from torchvision.models import resnet18, vgg11
 from opacus_new import PrivacyEngine
-from sklearn.datasets import load_iris, load_wine, load_breast_cancer, fetch_california_housing, fetch_openml
+from sklearn.datasets import load_breast_cancer, fetch_openml
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelBinarizer, MinMaxScaler
 import kagglehub
 from collections import defaultdict
 from sklearn.preprocessing import LabelEncoder
+import torch.nn as nn
+import medmnist
+from medmnist import INFO
 
 datasets_info = {
     # Vision datasets
     "mnist": {"classes": 10, "input_features": 28 * 28, "model_type": "mlp"},
-    "mnist_4": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
+    "mnist_4": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"}, 
     "mnist_2": {"classes": 2, "input_features": 28 * 28, "model_type": "mlp"},
     "mnist_4_small": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
-    "cifar10": {"classes": 10, "input_features": 3, "model_type": "simple_cnn"},
-    "fashionmnist": {"classes": 10, "input_features": 1, "model_type": "simple_cnn"},
-    "svhn": {"classes": 10, "input_features": 1, "model_type": "simple_cnn"},
+    "cifar10": {"classes": 10, "input_features": 3, "model_type": "simple_cnn", "num_spatial": 32},
+    "fashionmnist": {"classes": 10, "input_features": 1, "model_type": "simple_cnn", "num_spatial": 32},
+    "svhn": {"classes": 10, "input_features": 1, "model_type": "simple_cnn", "num_spatial": 32},
 
     # Tabular datasets (sklearn & OpenML)
     "breast_cancer": {"classes": 2, "input_features": 30, "model_type": "mlp"},
@@ -42,6 +45,23 @@ datasets_info = {
     
 }
 
+
+for dataset_name, info in INFO.items():
+    n_classes = len(info["label"].keys())
+    n_channels = 3 if info["n_channels"] == 3 else 1  # most are grayscale, some RGB
+    datasets_info[dataset_name] = {
+        "classes": n_classes,
+        "input_features": n_channels,   # for CNNs we treat channels as input
+        "model_type": "simple_cnn" ,
+        "num_spatial": 28     # CNN is more suitable than MLP for images
+    }
+
+def to_padded_array(list_of_lists):
+    # Find the maximum length of inner lists
+    max_len = max(len(lst) for lst in list_of_lists)
+    # Pad each list with None to match the maximum length
+    padded = [lst + [0] * (max_len - len(lst)) for lst in list_of_lists]
+    return np.array(padded, dtype=object)
 
 def assign_pp_values(
     pp_budgets,
@@ -137,8 +157,8 @@ def load_yaml_args(yaml_path):
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/adult.yaml')
-    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='clipping')
-    parser.add_argument("--seed", type=int)
+    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='sampling')
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     config = load_yaml_args(args.exp_yaml)
     for k, v in vars(args).items():
@@ -301,10 +321,36 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     """
 
     # Vision datasets
-    if name.lower() == 'mnist':
+        # ===================
+    # MedMNIST 2D datasets
+    # ===================
+    if name.lower() in INFO:  # check if dataset is in MedMNIST registry
+        info = INFO[name.lower()]
+        DataClass = getattr(medmnist, info['python_class'])
+
+        if transform is None:
+            transform = transforms.ToTensor()
+
+        split = 'train' if train else 'test'
+        dataset = DataClass(root=root, split=split, transform=transform, download=download)
+
+        X_tensor = torch.stack([dataset[i][0] for i in range(len(dataset))])
+        y_tensor = torch.tensor([dataset[i][1] for i in range(len(dataset))])
+
+        # If labels are one-hot (common in MedMNIST), convert to integer targets
+        if y_tensor.ndim > 1 and y_tensor.shape[1] == len(info["label"].keys()):
+            y_tensor = y_tensor.argmax(dim=1)
+        if y_tensor.ndim > 1:
+            y_tensor = y_tensor.squeeze()
+
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+    elif name.lower() == 'mnist':
         if transform is None:
             transform = transforms.ToTensor()
         dataset = MNIST(root=root, train=train, transform=transform, download=download)
+        X_tensor = dataset.test_data / 256.0
+        y_tensor = dataset.test_labels
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'mnist_4':
         if transform is None:
             transform = transforms.ToTensor()
@@ -376,6 +422,9 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         if transform is None:
             transform = transforms.ToTensor()
         dataset = CIFAR10(root=root, train=train, transform=transform, download=download)
+        X_tensor = dataset.test_data
+        y_tensor = dataset.test_labels
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'fashionmnist':
         if transform is None:
             transform = transforms.ToTensor()
@@ -621,7 +670,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
     return dataset
 
-import torch.nn as nn
+
 
 def load_model(dataset_name, model_name=None, num_classes=None):
     """
@@ -641,7 +690,7 @@ def load_model(dataset_name, model_name=None, num_classes=None):
     num_classes = datasets_info[dataset_name]["classes"] 
     model_name = datasets_info[dataset_name]["model_type"] 
     input_dim = datasets_info[dataset_name]["input_features"]
-    
+    num_spatial = datasets_info[dataset_name].get("num_spatial", None)
 
     # Model definitions
     if model_name.lower() == 'mlp':
@@ -665,7 +714,12 @@ def load_model(dataset_name, model_name=None, num_classes=None):
             nn.Linear(128, num_classes)
         )
     elif model_name.lower() == 'simple_cnn':
-
+        if num_spatial == 28:
+            embed_dim = 7
+        elif num_spatial == 32:
+            embed_dim = 8
+        else:
+            raise Exception
         model = nn.Sequential(
             nn.Conv2d(input_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -674,7 +728,7 @@ def load_model(dataset_name, model_name=None, num_classes=None):
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Flatten(),
-            nn.Linear(64 * 7 * 7 if input_dim == 1 else 64 * 8 * 8, 128),
+            nn.Linear(64 * embed_dim * embed_dim, 128),
             nn.ReLU(),
             nn.Linear(128, num_classes)
         )

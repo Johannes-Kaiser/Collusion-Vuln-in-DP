@@ -11,7 +11,7 @@ SAVE_PATH = "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/completeness.csv"
 TARGET_REQUIRED = ["bti.npy", "keep.npy", "logits.npy", "model.pt", "scores.npy"]
 
 # Files required in results folder
-RESULTS_REQUIRED = ["adv.npy", "integrals.npy", "num_steps_list.npy", "samplewise_auc_R.npy", "samplewise_auc.npy"]
+RESULTS_REQUIRED = ["adv.npy", "integrals_all.npy", "num_steps_list.npy", "samplewise_auc_R.npy", "samplewise_auc.npy"]
 
 def check_target_folder(target_path):
     """Check each subfolder in target folder for required files.
@@ -115,7 +115,7 @@ def main(base_path, save_path):
                             presence.get(f, False)
                             for f in [
                                 "adv.npy",
-                                "integrals.npy",
+                                "integrals_all.npy",
                                 "samplewise_auc_R.npy",
                                 "samplewise_auc.npy",
                             ]

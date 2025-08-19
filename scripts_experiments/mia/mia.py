@@ -26,6 +26,7 @@ from utils.utils_general import (
     format_list,
     generate_pp_budgets, 
     generate_string,
+    to_padded_array,
     assign_pp_values
 )
 from utils.utils_mia import (
@@ -87,7 +88,7 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
     keep_bool[keep_indiv] = True
 
     train_dl = DataLoader(
-        train_ds, batch_size=128, shuffle=True, num_workers=0  # , persistent_workers=True
+        train_ds, batch_size=args.batchsize, shuffle=True, num_workers=0  # , persistent_workers=True
     )
 
     optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
@@ -176,10 +177,10 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
         keep = order < int(args.pkeep * args.n_targets)
 
 
-    seeds_out = [None] * args.n_targets
-    pg_sample_rates_list = [None] * args.n_targets
-    pg_noise_multiplier_list = [None] * args.n_targets
-    num_steps_list = [None] * args.n_targets
+    seeds_out = [0] * args.n_targets
+    pg_sample_rates_list = [0] * args.n_targets
+    pg_noise_multiplier_list = [0] * args.n_targets
+    num_steps_list = [0] * args.n_targets
     n_parallel = getattr(args, "n_parallel", 1)
   
 
@@ -250,6 +251,9 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
         pg_sample_rates_list[i] = pg_sample_rates_list_mp[i]
         pg_noise_multiplier_list[i] = pg_noise_multiplier_list_mp[i]
         num_steps_list[i] = num_steps_list_mp[i]
+    pg_sample_rates_list = to_padded_array(pg_sample_rates_list_mp)
+    pg_noise_multiplier_list = to_padded_array(pg_noise_multiplier_list_mp)
+    num_steps_list = to_padded_array(num_steps_list_mp)
     # Save the lists as .npy files in the results directory
     np.save(os.path.join(args.savedir_result, "pg_sample_rates_list.npy"), pg_sample_rates_list, allow_pickle=True)
     np.save(os.path.join(args.savedir_result, "pg_noise_multiplier_list.npy"), pg_noise_multiplier_list, allow_pickle=True)
@@ -305,12 +309,13 @@ if __name__ == "__main__":
     args = parse_args_with_yaml()
     if args.n_parallel > 1:
         args.disable_inner = True
+    args.batchsize = getattr(args, 'batchsize', 128)
     # Use multiprocessing to spawn processes
     ctx = mp.get_context("spawn")
     manager = ctx.Manager()
     SR_mp = manager.dict()  # <-- managed dict for SR
     NM_mp = manager.dict()  # <-- managed dict for NM
-
+    print(f"Looking at dataset {args.dataset}")
     for portion in args.portions:
         portions = [portion, 1-portion]
         default_path = f"{args.dataset}/{args.dataset}_[{format_list(args.budgets)}]_[{format_list(portions)}]/{str(args.seed)}"
@@ -327,6 +332,7 @@ if __name__ == "__main__":
         samplewise_auc = {}
         samplewise_auc_R = {}
         integrals_all = {}
+        adv_all = {}
 
         if args.train_and_save_models:
             _ = train_target_models(portions, ctx, manager, SR_mp, NM_mp)
@@ -348,18 +354,19 @@ if __name__ == "__main__":
 
                 keep_budget = keep[:, indices]
                 scores_budget = scores[:, indices, :]
-                mean_in, mean_out, std_in, std_out = fit_mia_in_out_gaussians(keep, scores)
+                mean_in, mean_out, std_in, std_out = fit_mia_in_out_gaussians(keep_budget, scores_budget)
                 indiv_scores_val, x_vals, samplewise_R, integrals, adv = compute_individual_scores(mean_in, mean_out, std_in, std_out)
 
                 samplewise_auc[key] = indiv_scores_val
                 samplewise_auc_R[key] = samplewise_R
                 integrals_all[key] = integrals
+                adv_all[key] = adv
 
             # Save the dictionaries as .npy files in the results directory
             np.save(os.path.join(args.savedir_result, "samplewise_auc.npy"), samplewise_auc, allow_pickle=True)
             np.save(os.path.join(args.savedir_result, "samplewise_auc_R.npy"), samplewise_auc_R, allow_pickle=True)
             np.save(os.path.join(args.savedir_result, "integrals_all.npy"), integrals_all, allow_pickle=True)
-            np.save(os.path.join(args.savedir_result, "adv.npy"), adv, allow_pickle=True)
+            np.save(os.path.join(args.savedir_result, "adv.npy"), adv_all, allow_pickle=True)
 
         if args.plot_results:
             plot_and_save_samplewise_auc(

@@ -101,7 +101,7 @@ def get_sample_rate_estimates_rdp(
     for group, target_epsilon in enumerate(target_epsilons):
         eps_high, sigma_high_group = np.inf, 1e-3
         while eps_high > target_epsilon:
-            sigma_high_group *= 2
+            sigma_high_group *= 1.2
             sigma_high = max(sigma_high, sigma_high_group)
             eps_high = epsilon_for_delta(
                 sigma=sigma_high_group,
