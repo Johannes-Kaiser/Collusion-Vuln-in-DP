@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=36         # Number of CPUs (Don't use more than 24 per GPU)
 #SBATCH --mem=80G                  # Memory in GB (Don't use more than 48GB per GPU unless you absolutely need it and know what you are doing)
 #SBATCH --partition=universe
-#SBATCH --partition=eagle
-#SBATCH --account=eagle
+# #SBATCH --partition=eagle
+# #SBATCH --account=eagle
 
 export PYTHONUNBUFFERED=true
 
@@ -19,22 +19,27 @@ source /vol/miltank/users/kaiserj/Indivdiual_Privacy_DPSGD_Evaluation/.venv/bin/
 # Split the range between idx_start and idx_end into 10 chunks and run in parallel
 total_start=$1
 total_end=$2
-num_jobs=2
+num_jobs=$3
+exp_yaml=$4
 
-chunk_size=$(( (total_end - total_start + num_jobs) / num_jobs ))
+# Compute chunk size (rounded up)
+chunk_size=$(( (total_end - total_start + 1 + num_jobs - 1) / num_jobs ))
 
 for i in $(seq 0 $((num_jobs - 1))); do
     start=$(( total_start + i * chunk_size ))
     end=$(( start + chunk_size - 1 ))
+
     # Make sure the last chunk ends at total_end
     if [ $i -eq $((num_jobs - 1)) ]; then
         end=$total_end
     fi
 
+    echo "Running indices $start to $end"
     /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
         scripts_experiments/mia/budget_control_adv.py \
-        --exp_yaml ./scripts_experiments/mia/exp_yaml/mnist_4_small_budget_adv.yaml \
-        --idx_start $start --idx_end $end &
+        --exp_yaml "$exp_yaml" \
+        --idx_start "$start" --idx_end "$end" &
 done
 
+# Wait for all background jobs to finish
 wait

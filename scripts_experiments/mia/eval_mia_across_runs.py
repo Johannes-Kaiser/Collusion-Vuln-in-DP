@@ -8,6 +8,8 @@ from opacus_new.accountants import RDPAccountant
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import math
+
 
 mpl.rcParams.update({
     'font.size': 8,
@@ -29,18 +31,24 @@ def format_list(lst):
     return "_".join(str(x).replace('.', '').replace('-', 'm') for x in lst)
 
 # Example definitions
-datasets = ["credit_card_default",
-           "credit_card_default"]
-paths = ["/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/credit_card_default",
-             "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/credit_card_default"]
-budgets_all =    [[4.0, 20.0],
-                [4.0, 20.0]]
+datasets = ["credit_card_default"]
+paths = ["/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/credit_card_default"]
+budgets_all =    [[4.0,20.0]]
 portions_list = [
     [0.2, 0.8],
     [0.4, 0.6],
     [0.6, 0.4],
-    [0.8, 0.19999999999999996],
+    [0.8, 0.19999999999999996]
 ]
+rep_portion_1 = {
+    format_list(p): rf"$\mathbf{{{math.ceil(p[0]*100)}\%}}$/{math.ceil(p[1]*100)}%"
+    for p in portions_list
+}
+
+rep_portion_2 = {
+    format_list(p): rf"{math.ceil(p[0]*100)}%/$\mathbf{{{math.ceil(p[1]*100)}\%}}$"
+    for p in portions_list
+}
 portions_list_all = [portions_list for _ in datasets]
 
 def plot_experiment(dataset, base_path, budgets, portions_list):
@@ -167,7 +175,6 @@ def plot_experiment(dataset, base_path, budgets, portions_list):
     portion_keys = list(concatenated_integrals_dict.keys())
     budget_keys = list(next(iter(concatenated_integrals_dict.values())).keys())
     n_portions = len(portion_keys)
-    n_budgets = len(budget_keys)
 
     # Utility: generate lighter shades of a base color
     def lighten_color(color, amount=0.5):
@@ -345,7 +352,7 @@ def plot_experiment(dataset, base_path, budgets, portions_list):
             ax.set_xticks([])  # Remove x-ticks completely
             ax.set_xlabel("")  # Optional: clear label
         if col_idx == 0: 
-            ax.set_ylabel(f"MIA advantage", fontsize=8)
+            ax.set_ylabel("MIA advantage", fontsize=8)
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.savefig(f"{base_path}/additional_figures/violin_plot_grid_colored.png", dpi=300, bbox_inches='tight')
@@ -364,7 +371,7 @@ def plot_experiment(dataset, base_path, budgets, portions_list):
         """
         def compute_epsilon(noise_multiplier, delta, iterations, sampling_rate, clipping_norm):
             accountant = RDPAccountant()
-            for _ in range(int(iterations)):
+            for _ in range(int(iterations[0])):
                 accountant.step(noise_multiplier=noise_multiplier * 1/clipping_norm, sample_rate=sampling_rate)
             return accountant.get_epsilon(delta)
         epsilons = []
@@ -428,6 +435,120 @@ def plot_experiment(dataset, base_path, budgets, portions_list):
     plt.legend(title="Portion (split)", fontsize=12, title_fontsize=13, loc='upper right', frameon=True)
     plt.tight_layout()
     plt.savefig(f"{base_path}/additional_figures/epsilon_delta.png")
+
+
+    # --- Tradeoff Plots ---
+
+    def f_eps_delta(alpha, epsilon, delta):
+        """Piecewise linear trade-off function f_{ε, δ}."""
+        return np.maximum(0, np.maximum(1 - delta - np.exp(epsilon) * alpha,
+                                        np.exp(-epsilon) * (1 - delta - alpha)))
+
+
+    def compute_eps_delta_curves(noise_multiplier, steps, sample_rate, deltas):
+        """Run RDP accountant and return (eps, delta) pairs."""
+        accountant = RDPAccountant()
+        for _ in range(steps):
+            accountant.step(noise_multiplier=noise_multiplier,
+                            sample_rate=sample_rate)
+
+        epsilons = [accountant.get_epsilon(delta) for delta in deltas]
+        return list(zip(epsilons, deltas))
+
+
+    # Grid of type I error α
+    deltas = np.linspace(0, 1, 100)
+    alpha = np.linspace(0, 1, 200)
+
+    # Two stacked subplots (one per budget_key)
+    fig, axes = plt.subplots(len(budget_keys), 2,
+                            figsize=(6, 4 * len(budget_keys)),
+                            squeeze=False)
+
+    for r, budget_key in enumerate(budget_keys):
+        if r == 1:
+            rep_portion = rep_portion_1
+        else:
+            rep_portion = rep_portion_2
+
+        adv = {}
+        ax = axes[r, 0]
+
+        for portion in portion_keys:
+            color = portion_colors[portion]
+            info = extracted_info[portion]
+
+            noise_multiplier = info["pg_noise_multiplier_list"][r]
+            steps = info["num_steps_list"][0]
+            sample_rate = info["pg_sample_rates_list"][r]
+
+            # Compute (eps, delta) pairs
+            eps_delta_pairs = compute_eps_delta_curves(noise_multiplier,
+                                                    steps,
+                                                    sample_rate,
+                                                    deltas)
+
+            # Compute all tradeoff curves
+            f_values = []
+            for eps, delta in eps_delta_pairs:
+                f_values.append(f_eps_delta(alpha, eps, delta))
+            f_values = np.array(f_values)
+
+            # Envelope (pointwise maximum)
+            envelope = np.max(f_values, axis=0)
+
+            # Plot only the envelope (not individual curves anymore)
+            ax.plot(alpha, envelope, color=color, linewidth=2,
+                    label=rep_portion[portion])
+            
+            # Compare with trivial bound (y = 1 - α)
+            trivial = 1 - alpha
+            diff = trivial - envelope
+            diff = np.nan_to_num(diff, nan=0.0)
+            max_idx = np.argmax(diff)              # index of largest vertical distance
+            max_alpha = alpha[max_idx]
+            max_env = envelope[max_idx]
+            max_trivial = trivial[max_idx]
+            adv[portion] = np.max(diff)
+
+            # Draw vertical line showing distance
+            ax.plot([max_alpha, max_alpha], [max_trivial, max_env],
+                    color=color, linestyle=":", linewidth=1)
+
+        # Plot trivial bound
+        ax.plot([0, 1], [1, 0], 'k:', label="_nolegend_")
+
+        # Formatting
+        ax.set_title(f"Budget = {budget_key}")
+        ax.set_xlabel("Type I error α")
+        ax.set_ylabel("Type II error β")
+        ax.grid(True)
+        ax.legend()
+
+        ax = axes[r, 1]
+        # Prepare data
+        x = list(adv.keys())
+        colors = [portion_colors[k] for k in x]  # match colors to keys
+        x = [rep_portion[x_i] for x_i in x]
+        y = list(adv.values())
+
+        # Create slim bar chart on existing ax
+        ax.bar(x, y, color=colors, width=0.5)  # width <1 makes bars slimmer
+        ax.set_ylabel("Advantage")
+        ax.set_xticks(x)
+        ax.set_xticklabels(x, rotation=90)  # show keys as x-labels
+        y_min, y_max = min(y), max(y)
+        margin = 0.1 * (y_max - y_min)
+        ax.set_ylim(y_min - margin, y_max + margin)
+
+
+    plt.tight_layout()
+    plt.savefig(f"{base_path}/additional_figures/trade_off_curves.png")
+    plt.savefig(f"{base_path}/additional_figures/trade_off_curves.svg", format="svg", bbox_inches='tight')
+
+
+    
+
 
 if __name__ == "__main__":
     for d, path, bud, por in zip(datasets, paths, budgets_all, portions_list_all): 

@@ -34,7 +34,7 @@ parser.add_argument("--n_queries", default=2, type=int)
 args = parser.parse_args()
 
 def inference(savedir):
-    train_ds = load_dataset(args.dataset, train=True)
+    train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)
     train_dl = DataLoader(train_ds, batch_size=128, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
     # Infer the logits with multiple queries
     for path in tqdm(os.listdir(savedir)):

@@ -9,7 +9,7 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private, generate_string
+from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private, generate_string, get_dataset_size
 from utils.utils_mia import (
     score_mia,
     load_data,  
@@ -40,10 +40,9 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/zz_temp.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml_adv/uci_isolet.yaml')
     parser.add_argument('--idx_start', type=int, help='Start index for attackee', default=0)
     parser.add_argument('--idx_end', type=int, help='End index for attackee', default=200)
-    parser.add_argument('--dataset', type=str, help='Dataset to use', default='compas')
     args = parser.parse_args()
 
     # Load config from YAML
@@ -69,8 +68,7 @@ def format_list(lst):
 def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, device, lock):
     times_start = time.time()
     if args.private:
-        dummy_train_ds = load_dataset(args.dataset, train=True)
-        size = len(dummy_train_ds)
+        size = get_dataset_size(args.dataset, train=True, num_max_per_class_samples=args.num_max_per_class_samples)
         budgets_attacker = attacker_budgets
         budgets_attackee = args.budgets_attackee  
         pp_budgets = np.zeros(size) + budgets_attacker
@@ -90,7 +88,7 @@ def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, devi
     pg_noise_multiplier_list = list([None] * args.n_targets)
     num_steps_list = list([None] * args.n_targets)
     
-    train_ds = load_dataset(args.dataset, train=True)
+    train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)
     previous_keep_indiv = []
     previous_train_dl = None
 
@@ -198,7 +196,7 @@ def train_target_models(args, attackee_idx, attacker_budgets, SR_mp, NM_mp, devi
     return seeds_out, num_steps_list
 
 def inference(args, savedir, device):
-    train_ds = load_dataset(args.dataset, train=True)
+    train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)
     train_dl = DataLoader(train_ds, batch_size=args.batchsize, shuffle=False, num_workers=0)  # num_workers=0
     # Infer the logits with multiple queries
     for path in os.listdir(savedir):
@@ -252,11 +250,15 @@ def test_models(args, savedir, device):
 def worker_mp(args_dict, SR_mp, NM_mp, attackee_idx, lock):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     args = SimpleNamespace(**args_dict)
+    if args.num_max_per_class_samples is None:
+        num_max_per_class_samples_name_ext = ""
+    else:
+        num_max_per_class_samples_name_ext = f"_{args.num_max_per_class_samples}"
     for attacker_budgets in args.budgets:
         default_path = f"{args.dataset}_[{attacker_budgets}_{args.budgets_attackee}]"
         # Set savedir, savedir_target, and savedir_result as hardcoded attributes on args
-        args.savedir_target = f"./budget_adv_final_by_dataset/{args.dataset}/{attackee_idx}/{default_path}/target"
-        args.savedir_result = f"./budget_adv_final_by_dataset/{args.dataset}/{attackee_idx}/{default_path}/results"
+        args.savedir_target = f"./budget_adv_final_by_dataset/{args.dataset}{num_max_per_class_samples_name_ext}/{attackee_idx}/{default_path}/target"
+        args.savedir_result = f"./budget_adv_final_by_dataset/{args.dataset}{num_max_per_class_samples_name_ext}/{attackee_idx}/{default_path}/results"
         os.makedirs(args.savedir_result, exist_ok=True)
         os.makedirs(args.savedir_target, exist_ok=True)
 
@@ -303,7 +305,8 @@ if __name__ == "__main__":
             pickle.dumps(v)
         except Exception as e:
             print(f"[UNPICKLEABLE] {k}: {type(v)} -> {e}")
-
+    args.batchsize = getattr(args, 'batchsize', 128)
+    args.num_max_per_class_samples = getattr(args, 'num_max_per_class_samples', None)
     if args.n_parallel > 1:
         args.disable_inner = True
     DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")

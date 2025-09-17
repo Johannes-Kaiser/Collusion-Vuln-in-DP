@@ -27,50 +27,53 @@ def score_mia_one(input_tuple):
     """
     This loads a logits and converts it to a scored prediction.
     """
-    path, dataset_name = input_tuple
-    dataset = load_dataset(dataset_name, train=True)
-    if isinstance(dataset, Subset):
-        labels = dataset.targets.numpy()
-    else:
-        labels = dataset.tensors[1].numpy()
-    opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
-    predictions = softmax(opredictions)
-    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
-    count = predictions.shape[0]
+    path, dataset_name, num_max_per_class_samples = input_tuple
+    file_path = os.path.join(path, "scores.npy")
+    if not os.path.exists(file_path):
+        dataset = load_dataset(dataset_name, train=True, num_max_samples=num_max_per_class_samples)
+        if isinstance(dataset, Subset):
+            labels = dataset.targets.numpy()
+        else:
+            labels = dataset.tensors[1].numpy()
+        opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
+        predictions = softmax(opredictions)
+        assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
+        count = predictions.shape[0]
 
-    y_true = predictions[np.arange(count), :, labels]
-    predictions[np.arange(count), :, labels] = 0
-    y_wrong = predictions.sum(axis=-1)
-    logit = np.log(y_true + 1e-45) - np.log(y_wrong + 1e-45)
-    np.save(os.path.join(path, "scores.npy"), logit)
+        y_true = predictions[np.arange(count), :, labels]
+        predictions[np.arange(count), :, labels] = 0
+        y_wrong = predictions.sum(axis=-1)
+        logit = np.log(y_true + 1e-45) - np.log(y_wrong + 1e-45)
+        np.save(file_path, logit)
 
-def score_rmia_one(input_tuple):
-    """
-    This loads a logits and converts it to a scored prediction.
-    """
-    labels = load_dataset(dataset_name, train=True).targets.numpy()
-    assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
+# def score_rmia_one(input_tuple):
+#     """
+#     This loads a logits and converts it to a scored prediction.
+#     """
+#     labels = load_dataset(dataset_name, train=True).targets.numpy()
+#     assert predictions.shape[0] == labels.shape[0], "Mismatch between predictions and labels"
 
-    path, dataset_name = input_tuple
-    opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
-    predictions = softmax(opredictions)
+#     path, dataset_name = input_tuple
+#     opredictions = np.load(os.path.join(path, "logits.npy"))  # [n_examples, n_augs, n_classes]
+#     predictions = softmax(opredictions)
 
-    count = predictions.shape[0]
-    y_true = predictions[np.arange(count), :, labels]
-    np.save(os.path.join(path, "rmia_scores.npy"), y_true) 
+#     count = predictions.shape[0]
+#     y_true = predictions[np.arange(count), :, labels]
+#     np.save(os.path.join(path, "rmia_scores.npy"), y_true) 
 
 
 def score_mia(params, savedir):
     dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
     # with mp.get_context("spawn").Pool(8) as p:
     #     p.map(score_mia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+    num_max_per_class_samples = params.num_max_per_class_samples
     for x in os.listdir(savedir):
-        score_mia_one((os.path.join(savedir, x), dataset))
+        score_mia_one((os.path.join(savedir, x), dataset, num_max_per_class_samples))
 
-def score_rmia(params, savedir):
-    dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
-    with mp.get_context("spawn").Pool(8) as p:
-        p.map(score_rmia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
+# def score_rmia(params, savedir):
+#     dataset = params.dataset if hasattr(params, 'dataset') else params["dataset"]
+#     with mp.get_context("spawn").Pool(8) as p:
+#         p.map(score_rmia_one, [(os.path.join(savedir, x), dataset) for x in os.listdir(savedir)])
 
 
 def sweep(score, x):
@@ -320,21 +323,22 @@ def fit_mia_in_out_gaussians(keep, scores):
     return mean_in, mean_out, std_in, std_out
 
 def compute_individual_scores(mean_in, mean_out, std_in, std_out):
+    priv_scores = []
     auc_scores = []
+    advs = []
+    TPRs = []
+    FPR = np.linspace(1e-6, 1 - 1e-6, 10000)
+
     for j in range(mean_in.shape[0]):
-        # For each record in this model
+        # Moes - method
         mu_x = mean_in[j]
         mu_xp = mean_out[j]
         sigma2_x = std_in[j] ** 2
         sigma2_xp = std_out[j] ** 2
-        # Closed-form AUC for normal distributions
         denom = np.sqrt(sigma2_x + sigma2_xp)
         auc_j = norm.cdf((mu_x - mu_xp) / (denom + 1e-30))
-        auc_scores.append(auc_j)
-    advs = []
-    TPRs = []
-    FPR = np.linspace(1e-6, 1 - 1e-6, 100000)
-    for j in range(mean_in.shape[0]):
+
+
         mu1 = mean_in[j]
         mu0 = mean_out[j]
         sigma1 = std_in[j]
@@ -342,7 +346,12 @@ def compute_individual_scores(mean_in, mean_out, std_in, std_out):
         a = np.abs(mu1 - mu0) / (sigma1 + 1e-30)
         b = sigma0 / (sigma1 + 1e-30)
         R_x = norm.cdf(a + b * norm.ppf(FPR))
-        TPRs.append(R_x)
+
+        priv_score = abs(mu_x - mu_xp) / (sigma2_x + sigma2_xp + 1e-30)
+
+        priv_scores.append(priv_score)
+        auc_scores.append(auc_j)
+        TPRs.append(np.array(R_x))
         # Integrate R_x from 0 to high_alpha for each sample
     # Compute integrals for a log-spaced list of high_alpha values between 0 and 1 (10 steps)
     high_alpha_list = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
@@ -361,7 +370,7 @@ def compute_individual_scores(mean_in, mean_out, std_in, std_out):
         advs.append(adv)
 
     auc_scores = np.array(auc_scores)  
-    return auc_scores, FPR, TPRs, integrals, advs
+    return auc_scores, FPR, np.array(TPRs), integrals, advs, priv_scores
 
 
 

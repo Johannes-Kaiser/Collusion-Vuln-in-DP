@@ -49,18 +49,39 @@ datasets_info = {
 for dataset_name, info in INFO.items():
     n_classes = len(info["label"].keys())
     n_channels = 3 if info["n_channels"] == 3 else 1  # most are grayscale, some RGB
-    datasets_info[dataset_name] = {
-        "classes": n_classes,
-        "input_features": n_channels,   # for CNNs we treat channels as input
-        "model_type": "simple_cnn" ,
-        "num_spatial": 28     # CNN is more suitable than MLP for images
-    }
+    if dataset_name == "dermamnist":
+        datasets_info[dataset_name] = {
+            "classes": n_classes,
+            "input_features": 3,   # for CNNs we treat channels as input
+            "model_type": "resnet9" ,
+            "num_spatial": 28     # CNN is more suitable than MLP for images  
+        }
+    else:
+        datasets_info[dataset_name] = {
+            "classes": n_classes,
+            "input_features": n_channels,   # for CNNs we treat channels as input
+            "model_type": "simple_cnn" ,
+            "num_spatial": 28     # CNN is more suitable than MLP for images
+        }
 
 def to_padded_array(list_of_lists):
     # Find the maximum length of inner lists
-    max_len = max(len(lst) for lst in list_of_lists)
+    lengths = []
+    for lst in list_of_lists:
+        if lst is None:
+            lengths.append(1)
+        elif isinstance(lst, int):
+            lengths.append(1)
+        else:
+            lengths += [len(lst)]
+    max_len = max(lengths)
     # Pad each list with None to match the maximum length
-    padded = [lst + [0] * (max_len - len(lst)) for lst in list_of_lists]
+    padded = []
+    if lst is None or isinstance(lst, int):
+        padded.append([lst] + [0]*(max_len-1))
+    else:
+        padded.append(lst + [0] * (max_len - len(lst)))
+
     return np.array(padded, dtype=object)
 
 def assign_pp_values(
@@ -81,6 +102,30 @@ def assign_pp_values(
         pp_values[pp_budgets == budget] = values[i]
     return torch.Tensor(pp_values)
 
+
+def reduce_class_samples(X_tensor, y_tensor, max_samples_per_class):
+    if max_samples_per_class is None:
+        return X_tensor, y_tensor  # nothing to do
+
+    selected_indices = []
+    y_np = y_tensor.cpu().numpy()
+
+    for unique_class in torch.unique(y_tensor):
+        unique_class = unique_class.item()
+        cls_indices = (y_np == unique_class).nonzero()[0]
+
+        # randomly pick at most max_samples_per_class indices
+        if len(cls_indices) > max_samples_per_class:
+            chosen = cls_indices[:max_samples_per_class].tolist()
+        else:
+            chosen = cls_indices.tolist()
+
+        selected_indices.extend(chosen)
+        selected_indices.sort()
+
+    selected_indices = torch.tensor(selected_indices, dtype=torch.long)
+    X_tensor, y_tensor =  X_tensor[selected_indices], y_tensor[selected_indices]
+    return torch.utils.data.TensorDataset(X_tensor, y_tensor), X_tensor, y_tensor
 
 def generate_string(list1, list2, sep1=": ", sep2=","):
     if len(list1) != len(list2):
@@ -110,8 +155,8 @@ def get_budget_to_index_from_seeds(savedir, seeds):
     return first_bti
 
 # Construct default_path from dataset, budgets, and portions
-def get_dataset_size(dataset_name, train):
-    dummy_train_ds = load_dataset(dataset_name, train=train)
+def get_dataset_size(dataset_name, train, num_max_per_class_samples):
+    dummy_train_ds = load_dataset(dataset_name, train=train, num_max_samples=num_max_per_class_samples)
     return len(dummy_train_ds)
 
 def generate_pp_budgets(seed, size, portions, budgets):
@@ -157,8 +202,10 @@ def load_yaml_args(yaml_path):
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/adult.yaml')
-    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='sampling')
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='clipping')
+
+    # parser.add_argument('--num_max_per_class_samples', default=None)
+    parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
     config = load_yaml_args(args.exp_yaml)
     for k, v in vars(args).items():
@@ -213,7 +260,7 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
             loss = criterion(outputs, targets)
             loss.backward()
 
-            if idx is None:
+            if idx is None or pp_max_grad_norms is None:
                 optimizer.step()
             else:
                 optimizer.step(pp_max_grad_norms=pp_max_grad_norms[idx].to(device))
@@ -304,7 +351,24 @@ def preprocess_tabular(df, target_col, bin=True):
     X_final[np.isnan(X_final)] = np.take(np.nanmean(X_final, axis=0), np.where(np.isnan(X_final))[1])
     return X_final, y
 
-def load_dataset(name, root='./data', train=True, transform=None, download=True):
+class PrefetchedLoader:
+    def __init__(self, loader, device):
+        self.loader = loader
+        self.device = device
+
+    def __iter__(self):
+        for x, y in self.loader:
+            yield x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __getattr__(self, name):
+        # forward any attribute not defined in PrefetchedLoader to self.loader
+        return getattr(self.loader, name)
+
+
+def load_dataset(name, root='./data', train=True, transform=None, download=True, num_max_samples=None):
     """
     Loads a standard dataset from torchvision (for vision) or torchtext/tabular (for tabular).
 
@@ -418,12 +482,11 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         y_tensor = y_tensor[selected_idx]
         # Overwrite targets attribute for compatibility
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
-    elif name.lower() == 'cifar10':
-        if transform is None:
-            transform = transforms.ToTensor()
-        dataset = CIFAR10(root=root, train=train, transform=transform, download=download)
-        X_tensor = dataset.test_data
-        y_tensor = dataset.test_labels
+    elif name.lower() == 'cifar10':        
+        dataset = CIFAR10(root=root, train=train, transform=None, download=download)
+        X_tensor = torch.tensor(dataset.data, dtype=torch.float32) / 256.0
+        X_tensor = X_tensor.permute(0, 3, 1, 2)
+        y_tensor = torch.tensor(dataset.targets, dtype=torch.long)
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
     elif name.lower() == 'fashionmnist':
         if transform is None:
@@ -460,7 +523,7 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
 
         # Separate features and target
         X = df.drop('class', axis=1)
-        y = (df['class'] == ' >50K').astype(np.int64).values
+        y = (df['class'] == '>50K').astype(np.int64).values
 
         # One-hot encode categorical features, standardize numerical features
         X = pd.get_dummies(X)
@@ -554,10 +617,10 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
             X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long() - 1
+            y_tensor = torch.from_numpy(y_train).long()
         else:
             X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long() - 1
+            y_tensor = torch.from_numpy(y_test).long()
 
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
@@ -579,10 +642,10 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
         y_train, y_test = y[train_idx], y[test_idx]
         if train:
             X_tensor = torch.from_numpy(X_train).float()
-            y_tensor = torch.from_numpy(y_train).long()
+            y_tensor = torch.from_numpy(y_train).long() + 1
         else:
             X_tensor = torch.from_numpy(X_test).float()
-            y_tensor = torch.from_numpy(y_test).long()
+            y_tensor = torch.from_numpy(y_test).long() + 1
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
 
     elif name.lower() == "kaggle_cervical":
@@ -666,11 +729,26 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True)
     # Preproc
     else:
         raise ValueError(f"Dataset {name} not supported.")
+    if num_max_samples is not None:
+        dataset, X_tensor, y_tensor = reduce_class_samples(X_tensor, y_tensor, num_max_samples)
 
     print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
     return dataset
 
 
+class BasicBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn1 = nn.GroupNorm(channels, channels)
+        self.relu = nn.ReLU(inplace=False)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn2 = nn.GroupNorm(channels, channels)
+
+    def forward(self, x):
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return self.relu(out + x)  # residual connection
 
 def load_model(dataset_name, model_name=None, num_classes=None):
     """
@@ -687,8 +765,9 @@ def load_model(dataset_name, model_name=None, num_classes=None):
 
     dataset_name = dataset_name.lower()
     # Infer number of classes if not provided
-    num_classes = datasets_info[dataset_name]["classes"] 
-    model_name = datasets_info[dataset_name]["model_type"] 
+    num_classes = datasets_info[dataset_name]["classes"]
+    if model_name is None: 
+        model_name = datasets_info[dataset_name]["model_type"] 
     input_dim = datasets_info[dataset_name]["input_features"]
     num_spatial = datasets_info[dataset_name].get("num_spatial", None)
 
@@ -732,6 +811,38 @@ def load_model(dataset_name, model_name=None, num_classes=None):
             nn.ReLU(),
             nn.Linear(128, num_classes)
         )
+    elif model_name.lower() == 'resnet9':
+        if num_spatial == 28:
+            embed_dim = 7
+        elif num_spatial == 32:
+            embed_dim = 8
+        else:
+            raise Exception(f"Unsupported spatial size: {num_spatial}")
+
+        model = nn.Sequential(
+            # Stage 1
+            nn.Conv2d(input_dim, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Stage 2
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Stage 3 (residual blocks)
+            BasicBlock(128),
+            BasicBlock(128),
+
+            nn.Flatten(),
+            nn.Linear(128 * embed_dim * embed_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, num_classes)
+        )
     elif model_name.lower() == 'resnet18':
         # Use torchvision's ResNet18 for small images
 
@@ -760,25 +871,27 @@ def save_logits(args, model, train_dl, DEVICE, savedir, path):
         device: Device to run the model on.
         save_path: Path to save the logits (as a .pt file).
     """
-    model.eval()
+    save_path = os.path.join(savedir, path, "logits.npy")
+    if not os.path.exists(save_path):
+        model.eval()
 
-    logits_n = []
-    with torch.no_grad():
-        for i in range(args.n_queries):
-            logits = []
-            for x, _ in train_dl:
-                x = x.to(DEVICE)
-                outputs = model(x)
-                logits.append(outputs.detach().cpu().numpy())
-            logits_n.append(np.concatenate(logits))
-    logits_n = np.stack(logits_n, axis=1)
+        logits_n = []
+        with torch.no_grad():
+            for i in range(args.n_queries):
+                logits = []
+                for x, _ in train_dl:
+                    x = x.to(DEVICE)
+                    outputs = model(x)
+                    logits.append(outputs.detach().cpu().numpy())
+                logits_n.append(np.concatenate(logits))
+        logits_n = np.stack(logits_n, axis=1)
 
-    np.save(os.path.join(savedir, path, "logits.npy"), logits_n)
-    # Explicit cleanup
-    del logits_n, logits, outputs, x
-    torch.cuda.empty_cache()
-    import gc
-    gc.collect()
+        np.save(save_path, logits_n)
+        # Explicit cleanup
+        del logits_n, logits, outputs, x
+        torch.cuda.empty_cache()
+        import gc
+        gc.collect()
 
 def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights_to_budgets=True, nm=None, sr=None):
     # modulevalidator = ModuleValidator()

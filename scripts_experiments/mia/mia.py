@@ -27,7 +27,8 @@ from utils.utils_general import (
     generate_pp_budgets, 
     generate_string,
     to_padded_array,
-    assign_pp_values
+    assign_pp_values,
+    PrefetchedLoader
 )
 from utils.utils_mia import (
     generate_biregular_binary_matrix_random,
@@ -41,7 +42,7 @@ from utils.utils_mia import (
 )
 
 warnings.filterwarnings("ignore", category=UserWarning)
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+DEVICE = torch.device("cuda")  # if torch.cuda.is_available() else torch.device("cpu")
 
 
 
@@ -90,6 +91,7 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
     train_dl = DataLoader(
         train_ds, batch_size=args.batchsize, shuffle=True, num_workers=0  # , persistent_workers=True
     )
+    train_dl = PrefetchedLoader(train_dl, device=DEVICE)
 
     optim = torch.optim.AdamW(m.parameters(), lr=args.lr, weight_decay=5e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
@@ -145,7 +147,7 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
 def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
 
     if args.private:
-        size = get_dataset_size(args.dataset, train=True)
+        size = get_dataset_size(args.dataset, train=True, num_max_per_class_samples=args.num_max_per_class_samples)
         pp_budgets, budget_to_index = generate_pp_budgets(args.seed, size, portions, args.budgets)
 
     if args.private:
@@ -178,9 +180,9 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
 
 
     seeds_out = [0] * args.n_targets
-    pg_sample_rates_list = [0] * args.n_targets
-    pg_noise_multiplier_list = [0] * args.n_targets
-    num_steps_list = [0] * args.n_targets
+    pg_sample_rates_list = [None] * args.n_targets
+    pg_noise_multiplier_list = [None] * args.n_targets
+    num_steps_list = [None] * args.n_targets
     n_parallel = getattr(args, "n_parallel", 1)
   
 
@@ -191,73 +193,90 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
     pg_noise_multiplier_list_mp = manager.list([None] * args.n_targets)
     num_steps_list_mp = manager.list([None] * args.n_targets)
 
-    train_ds = load_dataset(args.dataset, train=True)#
+    train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)#
     try:
         num_existing_models = sum(os.path.isdir(os.path.join(args.savedir_target, d)) for d in os.listdir(args.savedir_target))
         targets_to_compute = list(set(range(args.n_targets)) - set(range(num_existing_models)))
     except FileNotFoundError:#
         targets_to_compute = list(range(args.n_targets))
-    processes = []
-    for target_id in targets_to_compute:
-        p = ctx.Process(
-            target=mp_worker,
-            args=(
-                target_id,
-                train_ds,
-                NM_mp,
-                SR_mp,
-                keep,
-                size,
-                args,
-                DEVICE,
-                pp_budgets,
-                budget_to_index,
-                seeds_out_mp,
-                pg_sample_rates_list_mp,
-                pg_noise_multiplier_list_mp,
-                num_steps_list_mp,
-            ),
-        )
-        processes.append(p)
+    if n_parallel > 1:
+        processes = []
+        for target_id in targets_to_compute:
+            p = ctx.Process(
+                target=mp_worker,
+                args=(
+                    target_id,
+                    train_ds,
+                    NM_mp,
+                    SR_mp,
+                    keep,
+                    size,
+                    args,
+                    DEVICE,
+                    pp_budgets,
+                    budget_to_index,
+                    seeds_out_mp,
+                    pg_sample_rates_list_mp,
+                    pg_noise_multiplier_list_mp,
+                    num_steps_list_mp,
+                ),
+            )
+            processes.append(p)
 
-    total_jobs = len(processes)
-    active_processes = []
-    idx = 0
-    with tqdm(total=total_jobs) as pbar:
-        while idx < total_jobs or active_processes:
-            # Start new processes if we have capacity
-            while len(active_processes) < n_parallel and idx < total_jobs:
-                p = processes[idx]
-                p.start()
-                active_processes.append(p)
-                idx += 1
-            # Remove finished processes
-            still_active = []
-            for p in active_processes:
-                if p.is_alive():
-                    still_active.append(p)
-                else:
-                    pbar.update(1)
-            active_processes = still_active
+        total_jobs = len(processes)
+        active_processes = []
+        idx = 0
+        with tqdm(total=total_jobs) as pbar:
+            while idx < total_jobs or active_processes:
+                # Start new processes if we have capacity
+                while len(active_processes) < n_parallel and idx < total_jobs:
+                    p = processes[idx]
+                    p.start()
+                    active_processes.append(p)
+                    idx += 1
+                # Remove finished processes
+                still_active = []
+                for p in active_processes:
+                    if p.is_alive():
+                        still_active.append(p)
+                    else:
+                        pbar.update(1)
+                active_processes = still_active
 
-            if active_processes:
-                active_processes[0].join(timeout=0.5)
-    for p in active_processes:
-        p.join()
+                if active_processes:
+                    active_processes[0].join(timeout=0.5)
+        for p in active_processes:
+            p.join()
+    else:
+        for target_id in targets_to_compute:
+            mp_worker(target_id,
+                    train_ds,
+                    NM_mp,
+                    SR_mp,
+                    keep,
+                    size,
+                    args,
+                    DEVICE,
+                    pp_budgets,
+                    budget_to_index,
+                    seeds_out_mp,
+                    pg_sample_rates_list_mp,
+                    pg_noise_multiplier_list_mp,
+                    num_steps_list_mp)
 
     # Copy managed lists back to numpy arrays/lists
     for i in range(args.n_targets):
-        seeds_out[i] = seeds_out_mp[i]
         pg_sample_rates_list[i] = pg_sample_rates_list_mp[i]
         pg_noise_multiplier_list[i] = pg_noise_multiplier_list_mp[i]
         num_steps_list[i] = num_steps_list_mp[i]
-    pg_sample_rates_list = to_padded_array(pg_sample_rates_list_mp)
-    pg_noise_multiplier_list = to_padded_array(pg_noise_multiplier_list_mp)
-    num_steps_list = to_padded_array(num_steps_list_mp)
+    pg_sample_rates_list = to_padded_array(pg_sample_rates_list)
+    pg_noise_multiplier_list = to_padded_array(pg_noise_multiplier_list)
+    num_steps_list = to_padded_array(num_steps_list)
     # Save the lists as .npy files in the results directory
-    np.save(os.path.join(args.savedir_result, "pg_sample_rates_list.npy"), pg_sample_rates_list, allow_pickle=True)
-    np.save(os.path.join(args.savedir_result, "pg_noise_multiplier_list.npy"), pg_noise_multiplier_list, allow_pickle=True)
-    np.save(os.path.join(args.savedir_result, "num_steps_list.npy"), num_steps_list, allow_pickle=True)
+    if np.max(num_steps_list) != 0:
+        np.save(os.path.join(args.savedir_result, "pg_sample_rates_list.npy"), pg_sample_rates_list, allow_pickle=True)
+        np.save(os.path.join(args.savedir_result, "pg_noise_multiplier_list.npy"), pg_noise_multiplier_list, allow_pickle=True)
+        np.save(os.path.join(args.savedir_result, "num_steps_list.npy"), num_steps_list, allow_pickle=True)
 
     return seeds_out, num_steps_list
 
@@ -293,7 +312,7 @@ def test_models(args, savedir, device):
     return
 
 def inference(savedir):
-    train_ds = load_dataset(args.dataset, train=True)
+    train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)
     train_dl = DataLoader(train_ds, batch_size=128, shuffle=False, num_workers=4)
     # Infer the logits with multiple queries
     for path in tqdm(os.listdir(savedir)):
@@ -310,6 +329,11 @@ if __name__ == "__main__":
     if args.n_parallel > 1:
         args.disable_inner = True
     args.batchsize = getattr(args, 'batchsize', 128)
+    args.num_max_per_class_samples = getattr(args, 'num_max_per_class_samples', None)
+    if args.num_max_per_class_samples is None:
+        num_max_per_class_samples_name_ext = ""
+    else:
+        num_max_per_class_samples_name_ext = f"_{args.num_max_per_class_samples}"
     # Use multiprocessing to spawn processes
     ctx = mp.get_context("spawn")
     manager = ctx.Manager()
@@ -318,7 +342,7 @@ if __name__ == "__main__":
     print(f"Looking at dataset {args.dataset}")
     for portion in args.portions:
         portions = [portion, 1-portion]
-        default_path = f"{args.dataset}/{args.dataset}_[{format_list(args.budgets)}]_[{format_list(portions)}]/{str(args.seed)}"
+        default_path = f"{args.model}/{args.dataset}{num_max_per_class_samples_name_ext}/{args.dataset}_[{format_list(args.budgets)}]_[{format_list(portions)}]/{str(args.seed)}"
         args.savedir = f"./exp_mia_final_{args.individualize}/{default_path}/shadow"
         args.savedir_target = f"./exp_mia_final_{args.individualize}/{default_path}/target"
         args.savedir_result = f"./exp_mia_final_{args.individualize}/{default_path}/results"
@@ -333,6 +357,7 @@ if __name__ == "__main__":
         samplewise_auc_R = {}
         integrals_all = {}
         adv_all = {}
+        priv_all = {}
 
         if args.train_and_save_models:
             _ = train_target_models(portions, ctx, manager, SR_mp, NM_mp)
@@ -355,18 +380,22 @@ if __name__ == "__main__":
                 keep_budget = keep[:, indices]
                 scores_budget = scores[:, indices, :]
                 mean_in, mean_out, std_in, std_out = fit_mia_in_out_gaussians(keep_budget, scores_budget)
-                indiv_scores_val, x_vals, samplewise_R, integrals, adv = compute_individual_scores(mean_in, mean_out, std_in, std_out)
+                indiv_scores_val, x_vals, samplewise_R, integrals, adv, priv_scores = compute_individual_scores(mean_in, mean_out, std_in, std_out)
 
                 samplewise_auc[key] = indiv_scores_val
                 samplewise_auc_R[key] = samplewise_R
                 integrals_all[key] = integrals
                 adv_all[key] = adv
+                priv_all[key] = priv_scores
 
             # Save the dictionaries as .npy files in the results directory
+            os.makedirs(args.savedir_result, exist_ok=True)
             np.save(os.path.join(args.savedir_result, "samplewise_auc.npy"), samplewise_auc, allow_pickle=True)
             np.save(os.path.join(args.savedir_result, "samplewise_auc_R.npy"), samplewise_auc_R, allow_pickle=True)
             np.save(os.path.join(args.savedir_result, "integrals_all.npy"), integrals_all, allow_pickle=True)
-            np.save(os.path.join(args.savedir_result, "adv.npy"), adv_all, allow_pickle=True)
+            np.save(os.path.join(args.savedir_result, "adv_all.npy"), adv_all, allow_pickle=True)
+            np.save(os.path.join(args.savedir_result, "priv_all.npy"), priv_all, allow_pickle=True)
+            print(f"Saved samplewise AUCs and integrals to {args.savedir_result}")
 
         if args.plot_results:
             plot_and_save_samplewise_auc(

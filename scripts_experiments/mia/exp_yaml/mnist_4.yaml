@@ -28,9 +28,9 @@ budgets:
 n_parallel: 8
 disable_inner: true
 seed: 42
-train_and_save_models: true
-compute_and_save_logits: true
-compute_and_save_scores: true
+train_and_save_models: false
+compute_and_save_logits: false
+compute_and_save_scores: false
 compute_and_save_stats: true
 plot_results: false
-test_model: true
+test_model: false
