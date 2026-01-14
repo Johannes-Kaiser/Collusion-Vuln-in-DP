@@ -101,6 +101,20 @@ def load_data(savedir):
 
     return keep, scores
 
+def load_data_adv(savedir):
+    """
+    Load our saved scores and then put them into a big matrix.
+    """
+    scores = []
+    keep = []
+
+    for path in os.listdir(savedir):
+        scores.append(np.load(os.path.join(savedir, path, "scores.npy")))
+        keep.append(np.load(os.path.join(savedir, path, "keep.npy")))
+    scores = np.array(scores)
+    keep = np.array(keep)
+
+    return keep, scores
 
 def generate_ours(keep, scores, check_keep, check_scores, in_size=100000, out_size=100000, fix_variance=False):
     """

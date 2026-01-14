@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from utils.utils_general import load_dataset, load_model, save_logits, train_loop, make_private, generate_string, get_dataset_size
 from utils.utils_mia import (
     score_mia,
-    load_data,  
+    load_data_adv,  
     fit_mia_in_out_gaussians,
     compute_individual_scores   
 )
@@ -40,9 +40,9 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml_adv/uci_isolet.yaml')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml_adv/credit_card_default.yaml')
     parser.add_argument('--idx_start', type=int, help='Start index for attackee', default=0)
-    parser.add_argument('--idx_end', type=int, help='End index for attackee', default=200)
+    parser.add_argument('--idx_end', type=int, help='End index for attackee', default=400)
     args = parser.parse_args()
 
     # Load config from YAML
@@ -273,12 +273,12 @@ def worker_mp(args_dict, SR_mp, NM_mp, attackee_idx, lock):
         if args.compute_and_save_scores:
             score_mia(args, args.savedir_target)
         if args.compute_and_save_stats:
-            keep, scores = load_data(args.savedir_target)
+            keep, scores = load_data_adv(args.savedir_target)
 
         keep_target_budget = np.expand_dims(keep[:, attackee_idx], axis=1)
         scores_target_budget = np.expand_dims(scores[:, attackee_idx, :], axis=1)
         mean_in, mean_out, std_in, std_out = fit_mia_in_out_gaussians(keep_target_budget, scores_target_budget)
-        indiv_scores_val_attackee, x_vals_attackee, samplewise_R_attackee, integrals_attackee, adv_attackee = compute_individual_scores(mean_in, mean_out, std_in, std_out)
+        indiv_scores_val_attackee, x_vals_attackee, samplewise_R_attackee, integrals_attackee, adv_attackee, priv_scores = compute_individual_scores(mean_in, mean_out, std_in, std_out)
 
         # Save the computed arrays/lists as .npy files in args.savedir_result
         np.save(os.path.join(args.savedir_result, "indiv_scores_val_attackee.npy"), np.array(indiv_scores_val_attackee))
@@ -286,6 +286,7 @@ def worker_mp(args_dict, SR_mp, NM_mp, attackee_idx, lock):
         np.save(os.path.join(args.savedir_result, "samplewise_R_attackee.npy"), np.array(samplewise_R_attackee))
         np.save(os.path.join(args.savedir_result, "integrals_attackee.npy"), np.array(integrals_attackee))
         np.save(os.path.join(args.savedir_result, "adv_attackee.npy"), np.array(adv_attackee))
+        np.save(os.path.join(args.savedir_result, "priv_scores.npy"), np.array(priv_scores))
         # Save the computed arrays/lists as YAML for visual inspection
         yaml_data = {
             "indiv_scores_val_attackee": np.array(indiv_scores_val_attackee).tolist(),
@@ -309,7 +310,7 @@ if __name__ == "__main__":
     args.num_max_per_class_samples = getattr(args, 'num_max_per_class_samples', None)
     if args.n_parallel > 1:
         args.disable_inner = True
-    DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    DEVICE = torch.device("cpu") #  torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device: {DEVICE}")
     # device = torch.device("cpu")  # Force CPU for now
 

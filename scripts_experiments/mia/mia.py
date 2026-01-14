@@ -47,17 +47,26 @@ DEVICE = torch.device("cuda")  # if torch.cuda.is_available() else torch.device(
 
 
 
-def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, num_steps_list):
+def mp_worker(target_id, train_ds, NM_mp, SR_mp, CW_mp, keep, size, args, DEVICE, pp_budgets, budget_to_index, seeds_out, pg_sample_rates_list, pg_noise_multiplier_list, pg_cw_list, num_steps_list):
     # Each process needs its own seed and device context
     # print(f"starting {target_id}")
+    try:
+        num_existing_models = sum(os.path.isdir(os.path.join(args.savedir_target, d)) for d in os.listdir(args.savedir_target))
+        targets_to_compute = list(set(range(args.n_targets)) - set(range(num_existing_models)))
+    except FileNotFoundError:
+        targets_to_compute = list(range(args.n_targets))
+    if targets_to_compute == 0:
+        return
     created_folder = False
     while not created_folder:
-        seed = int(time.time() * 1e6) % (2**32)
+        seed = args.seed*10000 + int(time.time() * 1e6) % (2**32)
         savedir = os.path.join(args.savedir_target, str(seed))
-        if os.path.isdir("path/to/folder"):
+        if os.path.isdir(savedir):
             continue
         else:
             created_folder = True
+    os.makedirs(savedir, exist_ok=True)
+    target_id = len(targets_to_compute) - 1
     np.random.seed(seed)
     seeds_out[target_id] = seed
     torch.manual_seed(seed)
@@ -98,25 +107,47 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
     criterion = torch.nn.CrossEntropyLoss()
     
     if args.private:
-        use_cached = str_budget in SR_mp and str_budget in NM_mp
+        use_cached = str_budget in SR_mp and str_budget in NM_mp and str_budget in CW_mp
         if use_cached:
             nm_local = NM_mp[str_budget]
             sr_local = SR_mp[str_budget]
+            cw_local = CW_mp[str_budget]
         if use_cached:
             model, optim, train_dl, privacy_engine = make_private(
                 model, train_dl, optim, pp_budgets_subset, args,
-                adapt_weights_to_budgets=False, nm=nm_local, sr=sr_local
+                adapt_weights_to_budgets=False, nm=nm_local, sr=sr_local, cw=cw_local
             )
         else:
             model, optim, train_dl, privacy_engine = make_private(
                 model, train_dl, optim, pp_budgets_subset, args
             )
-        pg_sample_rates_list[target_id] = privacy_engine.weights
-        pg_noise_multiplier_list[target_id] = [optim.noise_multiplier] * len(privacy_engine.weights)
-        if str_budget not in SR_mp:
+        if args.individualize == "sampling":
+            sr = privacy_engine.weights
+            nm = [optim.noise_multiplier] * len(privacy_engine.weights)
+            cw = [args.max_grad_norm] * len(privacy_engine.weights)
+            pg_sample_rates_list[target_id] = sr
+            pg_noise_multiplier_list[target_id] = nm
+            pg_cw_list[target_id] = cw
+            if str_budget not in SR_mp:
                 SR_mp[str_budget] = pg_sample_rates_list[target_id]
-        if str_budget not in NM_mp:
-            NM_mp[str_budget] = pg_noise_multiplier_list[target_id]
+            if str_budget not in NM_mp:
+                NM_mp[str_budget] = pg_noise_multiplier_list[target_id]
+            if str_budget not in CW_mp:
+                CW_mp[str_budget] = pg_cw_list[target_id]
+        else:
+            sr = [1 / len(train_dl)] * len(privacy_engine.weights)
+            nm = [optim.noise_multiplier] * len(privacy_engine.weights)
+            cw = privacy_engine.weights
+            pg_sample_rates_list[target_id] = sr
+            pg_noise_multiplier_list[target_id] = nm
+            pg_cw_list[target_id] = cw
+            if str_budget not in SR_mp:
+                SR_mp[str_budget] = pg_sample_rates_list[target_id]
+            if str_budget not in NM_mp:
+                NM_mp[str_budget] = pg_noise_multiplier_list[target_id]
+            if str_budget not in CW_mp:
+                CW_mp[str_budget] = pg_cw_list[target_id]
+            
     else:
         pg_sample_rates_list[target_id] = None
         pg_noise_multiplier_list[target_id] = None
@@ -138,17 +169,20 @@ def mp_worker(target_id, train_ds, NM_mp, SR_mp, keep, size, args, DEVICE, pp_bu
         args.epochs,
         pp_max_grad_norms
     )
-    os.makedirs(savedir, exist_ok=True)
     np.save(savedir + "/keep.npy", keep_bool)
     torch.save(m.state_dict(), savedir + "/model.pt")
+    np.save(os.path.join(savedir, "pg_sample_rates.npy"), sr, allow_pickle=True)
+    np.save(os.path.join(savedir, "pg_noise_multiplier.npy"), nm, allow_pickle=True)
+    np.save(os.path.join(savedir, "pg_cw.npy"), cw, allow_pickle=True)
+    np.save(os.path.join(savedir, "num_steps.npy"), num_steps, allow_pickle=True)
     with open(os.path.join(savedir, "bti.npy"), "wb") as f:
         np.save(f, budget_to_index, allow_pickle=True)        
 
-def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
+def train_target_models(portions, ctx, manager, SR_mp, NM_mp, CW_mp):
 
     if args.private:
         size = get_dataset_size(args.dataset, train=True, num_max_per_class_samples=args.num_max_per_class_samples)
-        pp_budgets, budget_to_index = generate_pp_budgets(args.seed, size, portions, args.budgets)
+        pp_budgets, budget_to_index = generate_pp_budgets(1, size, portions, args.budgets)
 
     if args.private:
         index_order = []
@@ -182,6 +216,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
     seeds_out = [0] * args.n_targets
     pg_sample_rates_list = [None] * args.n_targets
     pg_noise_multiplier_list = [None] * args.n_targets
+    pg_cw_list = [None] * args.n_targets
     num_steps_list = [None] * args.n_targets
     n_parallel = getattr(args, "n_parallel", 1)
   
@@ -191,6 +226,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
     seeds_out_mp = manager.list([None] * args.n_targets)
     pg_sample_rates_list_mp = manager.list([None] * args.n_targets)
     pg_noise_multiplier_list_mp = manager.list([None] * args.n_targets)
+    pg_cw_list_mp = manager.list([None] * args.n_targets)
     num_steps_list_mp = manager.list([None] * args.n_targets)
 
     train_ds = load_dataset(args.dataset, train=True, num_max_samples=args.num_max_per_class_samples)#
@@ -209,6 +245,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
                     train_ds,
                     NM_mp,
                     SR_mp,
+                    CW_mp,
                     keep,
                     size,
                     args,
@@ -218,6 +255,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
                     seeds_out_mp,
                     pg_sample_rates_list_mp,
                     pg_noise_multiplier_list_mp,
+                    pg_cw_list,
                     num_steps_list_mp,
                 ),
             )
@@ -253,6 +291,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
                     train_ds,
                     NM_mp,
                     SR_mp,
+                    CW_mp,
                     keep,
                     size,
                     args,
@@ -262,6 +301,7 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
                     seeds_out_mp,
                     pg_sample_rates_list_mp,
                     pg_noise_multiplier_list_mp,
+                    pg_cw_list_mp,
                     num_steps_list_mp)
 
     # Copy managed lists back to numpy arrays/lists
@@ -269,13 +309,16 @@ def train_target_models(portions, ctx, manager, SR_mp, NM_mp):
         pg_sample_rates_list[i] = pg_sample_rates_list_mp[i]
         pg_noise_multiplier_list[i] = pg_noise_multiplier_list_mp[i]
         num_steps_list[i] = num_steps_list_mp[i]
+        pg_cw_list[i] = pg_cw_list_mp[i]
     pg_sample_rates_list = to_padded_array(pg_sample_rates_list)
     pg_noise_multiplier_list = to_padded_array(pg_noise_multiplier_list)
     num_steps_list = to_padded_array(num_steps_list)
+    pg_cw_list = to_padded_array(pg_cw_list)
     # Save the lists as .npy files in the results directory
     if np.max(num_steps_list) != 0:
         np.save(os.path.join(args.savedir_result, "pg_sample_rates_list.npy"), pg_sample_rates_list, allow_pickle=True)
         np.save(os.path.join(args.savedir_result, "pg_noise_multiplier_list.npy"), pg_noise_multiplier_list, allow_pickle=True)
+        np.save(os.path.join(args.savedir_result, "pg_cw_list.npy"), pg_cw_list, allow_pickle=True)
         np.save(os.path.join(args.savedir_result, "num_steps_list.npy"), num_steps_list, allow_pickle=True)
 
     return seeds_out, num_steps_list
@@ -284,27 +327,35 @@ def test_models(args, savedir, device):
     test_ds = load_dataset(args.dataset, train=False)
     test_dl = DataLoader(test_ds, batch_size=args.batchsize, shuffle=False, num_workers=0)  # num_workers=0
     # Infer the logits with multiple queries
-    for path in os.listdir(savedir):
-        m = load_model(args.dataset, model_name=args.model, num_classes=None)
-        m.load_state_dict(torch.load(os.path.join(savedir, path, "model.pt")))
-        m.to(device)
-        m.eval()
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for data, target in test_dl:
-                data, target = data.to(device), target.to(device)
-                outputs = m(data)
-                _, predicted = torch.max(outputs.data, 1)
-                total += target.size(0)
-                correct += (predicted == target).sum().item()
-        accuracy = correct / total
-        print(f"Accuracy for model in {path}: {accuracy:.4f}")
-        np.save(os.path.join(savedir, path, "accuracy.npy"), np.array([accuracy]))
-        del m
-        torch.cuda.empty_cache()
-        import gc
-        gc.collect()
+    accuracies = []
+    for path in os.listdir(savedir)[:10]:
+        try:
+            m = load_model(args.dataset, model_name=args.model, num_classes=None)
+            m.load_state_dict(torch.load(os.path.join(savedir, path, "model.pt")))
+            m.to(device)
+            m.eval()
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for data, target in test_dl:
+                    data, target = data.to(device), target.to(device)
+                    outputs = m(data)
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += target.size(0)
+                    correct += (predicted == target).sum().item()
+            accuracy = correct / total
+            accuracies.append(accuracy)
+            # print(f"Accuracy for model in {path}: {accuracy:.4f}")
+            np.save(os.path.join(savedir, path, "accuracy.npy"), np.array([accuracy]))
+            del m
+            torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+        except Exception as e:
+            print(f"Error loading model from {path}: {e}")
+            continue
+    print(f"{savedir}")
+    print(f"Mean accuracy over {len(accuracies)} models: {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
     del test_dl, test_ds
     torch.cuda.empty_cache()
     import gc
@@ -339,13 +390,14 @@ if __name__ == "__main__":
     manager = ctx.Manager()
     SR_mp = manager.dict()  # <-- managed dict for SR
     NM_mp = manager.dict()  # <-- managed dict for NM
+    CW_mp = manager.dict()  # <-- managed dict for CW
     print(f"Looking at dataset {args.dataset}")
     for portion in args.portions:
         portions = [portion, 1-portion]
         default_path = f"{args.model}/{args.dataset}{num_max_per_class_samples_name_ext}/{args.dataset}_[{format_list(args.budgets)}]_[{format_list(portions)}]/{str(args.seed)}"
-        args.savedir = f"./exp_mia_final_{args.individualize}/{default_path}/shadow"
-        args.savedir_target = f"./exp_mia_final_{args.individualize}/{default_path}/target"
-        args.savedir_result = f"./exp_mia_final_{args.individualize}/{default_path}/results"
+        args.savedir = f"./exp_mia_final_{args.individualize}_{args.name_ext}/{default_path}/shadow"
+        args.savedir_target = f"./exp_mia_final_{args.individualize}_{args.name_ext}/{default_path}/target"
+        args.savedir_result = f"./exp_mia_final_{args.individualize}_{args.name_ext}/{default_path}/results"
 
         # Save the args dict as a JSON file in savedir_result
         os.makedirs(args.savedir_result, exist_ok=True)
@@ -360,7 +412,7 @@ if __name__ == "__main__":
         priv_all = {}
 
         if args.train_and_save_models:
-            _ = train_target_models(portions, ctx, manager, SR_mp, NM_mp)
+            _ = train_target_models(portions, ctx, manager, SR_mp, NM_mp, CW_mp)
         if args.test_model:
             test_models(args, args.savedir_target, DEVICE)
         if args.compute_and_save_logits:

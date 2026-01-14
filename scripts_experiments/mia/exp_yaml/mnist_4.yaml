@@ -31,6 +31,6 @@ seed: 42
 train_and_save_models: false
 compute_and_save_logits: false
 compute_and_save_scores: false
-compute_and_save_stats: true
+compute_and_save_stats: false
 plot_results: false
-test_model: false
+test_model: true

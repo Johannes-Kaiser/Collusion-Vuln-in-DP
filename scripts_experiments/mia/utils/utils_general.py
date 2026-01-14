@@ -201,11 +201,12 @@ def load_yaml_args(yaml_path):
 
 def parse_args_with_yaml():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/adult.yaml')
-    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='clipping')
+    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/temp_2/dermamnist_small.yaml')
+    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='sampling')
+    parser.add_argument('--name_ext', type=str, help='Name extension for the experiment', default='temp')
+    parser.add_argument("--seed", type=int, default=2)
 
     # parser.add_argument('--num_max_per_class_samples', default=None)
-    parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
     config = load_yaml_args(args.exp_yaml)
     for k, v in vars(args).items():
@@ -732,23 +733,72 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True,
     if num_max_samples is not None:
         dataset, X_tensor, y_tensor = reduce_class_samples(X_tensor, y_tensor, num_max_samples)
 
-    print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
+    # print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
     return dataset
 
+import torch
+import torch.nn as nn
 
 class BasicBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn1 = nn.GroupNorm(channels, channels)
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.gn1 = nn.GroupNorm(32, planes)
         self.relu = nn.ReLU(inplace=False)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn2 = nn.GroupNorm(channels, channels)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.gn2 = nn.GroupNorm(32, planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.GroupNorm(32, self.expansion * planes)
+            )
 
     def forward(self, x):
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.relu(out + x)  # residual connection
+        out = self.relu(self.gn1(self.conv1(x)))
+        out = self.gn2(self.conv2(out))
+        out = out + self.shortcut(x)
+        out = self.relu(out)
+        return out
+
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=10, num_input_channels=3):
+        super(ResNet, self).__init__()
+        self.in_planes = 64
+        
+        self.conv1 = nn.Conv2d(num_input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.gn1 = nn.GroupNorm(32, 64)
+        self.relu = nn.ReLU(inplace=False)
+        
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = self.relu(self.gn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = torch.flatten(out, 1)
+        out = self.fc(out)
+        return out
 
 def load_model(dataset_name, model_name=None, num_classes=None):
     """
@@ -822,34 +872,40 @@ def load_model(dataset_name, model_name=None, num_classes=None):
         model = nn.Sequential(
             # Stage 1
             nn.Conv2d(input_dim, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(32, 64),
+            nn.ReLU(inplace=False),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(32, 64),
+            nn.ReLU(inplace=False),
             nn.MaxPool2d(2),
 
             # Stage 2
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(32, 128),
+            nn.ReLU(inplace=False),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(32, 128),
+            nn.ReLU(inplace=False),
             nn.MaxPool2d(2),
 
             # Stage 3 (residual blocks)
-            BasicBlock(128),
-            BasicBlock(128),
-
+            BasicBlock(128, 128),
+            BasicBlock(128, 128),
+            
             nn.Flatten(),
             nn.Linear(128 * embed_dim * embed_dim, 256),
-            nn.ReLU(),
+            nn.ReLU(inplace=False),
             nn.Linear(256, num_classes)
         )
-    elif model_name.lower() == 'resnet18':
-        # Use torchvision's ResNet18 for small images
+        return model
 
-        model = resnet18(num_classes=input_dim)
-        # Adjust input conv layer if needed
-        if input_dim != 3:
-            model.conv1 = nn.Conv2d(input_dim, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    elif model_name.lower() == 'resnet18':
+        return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, num_input_channels=input_dim)
+
+    elif model_name.lower() == 'resnet34':
+        return ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes, num_input_channels=input_dim)
+
+
     elif model_name.lower() == 'small_vgg' or model_name.lower() == 'vgg':
 
         model = vgg11(num_classes=input_dim)
@@ -893,7 +949,7 @@ def save_logits(args, model, train_dl, DEVICE, savedir, path):
         import gc
         gc.collect()
 
-def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights_to_budgets=True, nm=None, sr=None):
+def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights_to_budgets=True, nm=None, sr=None, cw=None):
     # modulevalidator = ModuleValidator()
     # model = modulevalidator.fix_and_validate(model)
 
@@ -918,7 +974,10 @@ def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights
         unique_budgets = np.unique(pp_budgets)
         budget_to_weight = {}
         for i, budget in enumerate(unique_budgets):
-            budget_to_weight[budget] = sr[i]
+            if args.individualize == "sampling":
+                budget_to_weight[budget] = sr[i]
+            else:
+                budget_to_weight[budget] = cw[i]
         pp_weights = np.array([budget_to_weight[budget] for budget in pp_budgets])
         private_model, private_optimizer, private_loader = privacy_engine \
             .make_private(module=model,

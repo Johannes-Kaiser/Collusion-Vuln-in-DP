@@ -30,6 +30,8 @@ import scipy.stats as stats
 from statsmodels.stats.multitest import multipletests
 from itertools import combinations
 import statsmodels.formula.api as smf
+from collections import defaultdict
+from joblib import Parallel, delayed
 
 
 # Ignore specific warnings
@@ -68,293 +70,190 @@ portion_list = [
 # Define experiments to run. This structure replaces the separate global lists.
 
 EXPERIMENTS = [
-    {
-        "dataset": "adult",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/adult",
-        "budgets": [1.0, 8.0],
-        "portions_list": portion_list
-    },
+
+    # ##### Sampling based methods
     {
         "dataset": "bloodmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/bloodmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/bloodmnist",
         "budgets": [8.0, 32.0],
         "portions_list": portion_list
     },
     {
-        "dataset": "breast_cancer",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/breast_cancer",
-        "budgets": [5.0, 20.0],
-        "portions_list": portion_list
-    },
-    {
         "dataset": "cifar10",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/cifar10",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/cifar10",
         "budgets": [16.0, 50.0],
         "portions_list": portion_list
     },
     {
         "dataset": "credit_card_default",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/credit_card_default",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/credit_card_default",
         "budgets": [4.0, 20.0],
         "portions_list": portion_list
     },
     {
         "dataset": "dermamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/dermamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/dermamnist",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "mnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/mnist",
+        "budgets": [4.0, 16.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "organcmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/organcmnist",
+        "budgets": [4.0, 16.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "organsmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/organsmnist",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "pneumoniamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/None/pneumoniamnist",
+        "budgets": [4.0, 16.0],
+        "portions_list": portion_list
+    },
+    
+
+    # ##### Clipping based methods
+    {
+        "dataset": "bloodmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/bloodmnist",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "breastmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/breastmnist",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "credit_card_default",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/credit_card_default",
+        "budgets": [4.0, 20.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "dermamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/dermamnist",
         "budgets": [8.0, 32.0],
         "portions_list": portion_list
     },
     {
         "dataset": "german_credit",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/german_credit",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/german_credit",
         "budgets": [4.0, 16.0],
         "portions_list": portion_list
     },
     {
         "dataset": "mnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/mnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/mnist",
         "budgets": [4.0, 16.0],
         "portions_list": portion_list
     },
     {
         "dataset": "mnist_4",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/mnist_4",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/mnist_4",
         "budgets": [16.0, 50.0],
         "portions_list": portion_list
     },
     {
         "dataset": "organcmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/organcmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/organcmnist",
         "budgets": [4.0, 16.0],
         "portions_list": portion_list
     },
     {
         "dataset": "organsmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/organsmnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "pneumoniamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/pneumoniamnist",
-        "budgets": [4.0, 16.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "uci_isolet",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/uci_isolet",
-        "budgets": [1.0, 10.0],
-        "portions_list": portion_list, # Keeping original float for perfect path matching
-    },
-    {
-        "dataset": "uci_isolet",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/None/uci_isolet",
-        "budgets": [1.0, 5.0],
-        "portions_list": portion_list, # Keeping original float for perfect path matching
-    },
-
-    ## Clipping experiments
-    {
-        "dataset": "bloodmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/bloodmnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "bloodmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/bloodmnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "breast_cancer",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/breast_cancer",
-        "budgets": [2.0, 10.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "breast_cancer",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/breast_cancer",
-        "budgets": [3.0, 10.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "breastmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/breastmnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "breastmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/breastmnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "cifar10",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/cifar10",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "credit_card_default",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/credit_card_default",
-        "budgets": [4.0, 20.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "dermamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/dermamnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "dermamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/dermamnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "german_credit",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/german_credit",
-        "budgets": [4.0, 16.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "mnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/mnist",
-        "budgets": [1.0, 8.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "mnist_4",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/mnist_4",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "organcmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/organcmnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "organcmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/organcmnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "organsmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/organsmnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "organsmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/organsmnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "pneumoniamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/pneumoniamnist",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "pneumoniamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/pneumoniamnist",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "uci_isolet",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None_2/uci_isolet",
-        "budgets": [1.0, 10.0],
-        "portions_list": portion_list, # Keeping original float for perfect path matching
-    },
-    ###### resnet 9 #####
-    {
-        "dataset": "breastmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/breastmnist_500",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "dermamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/dermamnist_500",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "organcmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/organcmnist_500",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "organsmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/organsmnist_500",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-            {
-        "dataset": "pneumoniamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/pneumoniamnist_500",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "breastmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/breastmnist_2000",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "dermamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/dermamnist_2000",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "organcmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/organcmnist_2000",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-        {
-        "dataset": "organsmnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/organsmnist_2000",
-        "budgets": [8.0, 32.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "pneumoniamnist",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling/resnet9/pneumoniamnist_2000",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/None/organsmnist",
         "budgets": [8.0, 32.0],
         "portions_list": portion_list
     },
 
-    {
-        "dataset": "credit_card_default",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None/credit_card_default",
-        "budgets": [4.0, 20.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "german_credit",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None/german_credit",
-        "budgets": [4.0, 16.0],
-        "portions_list": portion_list
-    },
-    {
-        "dataset": "mnist_4",
-        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping/None/mnist_4",
-        "budgets": [16.0, 50.0],
-        "portions_list": portion_list
-    },    
+    ####
+    #### smaller datasets
+    ####
 
+    {
+        "dataset": "organcmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/organcmnist_2000",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "organsmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/organsmnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "organsmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/organsmnist_2000",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "pneumoniamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/pneumoniamnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "pneumoniamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/pneumoniamnist_2000",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "dermamnist_500",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_sampling_fixed_split/resnet9/dermamnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+
+    ####
+    #### smaller datasets clipping
+    ####
+
+    {
+        "dataset": "organcmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/resnet9/organcmnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "organsmnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/resnet9/organsmnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "pneumoniamnist",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/resnet9/pneumoniamnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "dermamnist_500",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/resnet9/dermamnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+    {
+        "dataset": "breastmnist_500",
+        "path": "/vol/miltank/users/kaiserj/Clipping_vs_Sampling/exp_mia_final_clipping_fixed_split/resnet9/breastmnist_500",
+        "budgets": [8.0, 32.0],
+        "portions_list": portion_list
+    },
+   
 ]
 
 # Constants for file names and dictionary keys to avoid string literals
@@ -362,9 +261,11 @@ ARGS_FILE = "args.json"
 NUM_STEPS_FILE = "num_steps_list.npy"
 NOISE_MULT_FILE = "pg_noise_multiplier_list.npy"
 SAMPLE_RATES_FILE = "pg_sample_rates_list.npy"
+CLIPPING_WEIGHTS_FILE = "pg_cw_list_mp.npy"
 INTEGRALS_FILE = "integrals_all.npy"
-ADVANTAGE_FILE = "adv.npy"
+ADVANTAGE_FILE = "adv_all.npy"
 PRIVACY_SCORES_FILE = "priv_all.npy"
+BTI_FILE = "bti.npy"
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -376,6 +277,8 @@ def make_serializable(obj):
         return {k: make_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [make_serializable(v) for v in obj]
+    elif isinstance(obj, bool):
+        return str(obj)  # convert bool to string
     else:
         return obj
     
@@ -430,6 +333,9 @@ class ExperimentVisualizer:
         self.aggregated_integrals: Dict[str, Dict[str, Any]] = {}
         self.aggregated_adv: Dict[str, Dict[str, Any]] = {}
         self.aggregated_priv: Dict[str, Dict[str, Any]] = {}
+        self.aggregated_bti_integrals: Dict[str, Dict[str, Any]] = {}
+        self.aggregated_bti_adv: Dict[str, Dict[str, Any]] = {}
+        self.aggregated_bti_priv: Dict[str, Dict[str, Any]] = {}
         self.portion_keys = [format_list_for_path(p) for p in self.portions_list]
         self.budget_keys = [str(b) for b in self.budgets]
         
@@ -460,29 +366,71 @@ class ExperimentVisualizer:
                 if not run_dir.is_dir(): 
                     continue
                 results_path = run_dir / "results"
+                targets_path = run_dir / "target"
+                target_folders = [f for f in targets_path.iterdir() if f.is_dir()]
+                if target_folders:
+                    one_target_folder = target_folders[0]
+                else:
+                    one_target_folder = None
                 try:
                     with open(results_path / ARGS_FILE, "r") as f: 
                         args = json.load(f)
-                    run_info = {
-                        k: np.load(results_path / v, allow_pickle=True).tolist()
-                        for k, v in {
-                            "num_steps_list": NUM_STEPS_FILE,
-                            "pg_noise_multiplier_list": NOISE_MULT_FILE,
-                            "pg_sample_rates_list": SAMPLE_RATES_FILE,
-                        }.items()
-                    }
-                    run_info.update({
-                        k: np.load(results_path / v, allow_pickle=True).item()
-                        for k, v in {
-                            "integrals_all": INTEGRALS_FILE,
-                            "adv": ADVANTAGE_FILE,
-                            "priv_all": PRIVACY_SCORES_FILE
-                        }.items()
-                    })
 
+                    run_info = {}
+
+                    # --- Files that should produce a list ---
+                    try:
+                        run_info["bti"] = np.load(one_target_folder / BTI_FILE, allow_pickle=True).item()
+                    except FileNotFoundError:
+                        raise FileNotFoundError(f"Missing required file: {BTI_FILE}")
+
+                    try:
+                        run_info["num_steps_list"] = np.load(results_path / NUM_STEPS_FILE, allow_pickle=True).tolist()
+                    except FileNotFoundError:
+                        raise FileNotFoundError(f"Missing required file: {NUM_STEPS_FILE}")
+
+                    try:
+                        run_info["pg_noise_multiplier_list"] = np.load(results_path / NOISE_MULT_FILE, allow_pickle=True).tolist()
+                    except FileNotFoundError:
+                        raise FileNotFoundError(f"Missing required file: {NOISE_MULT_FILE}")
+
+                    try:
+                        run_info["pg_sample_rates_list"] = np.load(results_path / SAMPLE_RATES_FILE, allow_pickle=True).tolist()
+                    except FileNotFoundError:
+                        raise FileNotFoundError(f"Missing required file: {SAMPLE_RATES_FILE}")
+
+                    try:
+                        run_info["pg_cw_list"] = np.load(results_path / CLIPPING_WEIGHTS_FILE, allow_pickle=True).tolist()
+                    except FileNotFoundError:
+                        # For clipping weights, fallback to None instead of error
+                        run_info["pg_cw_list"] = [[1, 1]]
+
+                    # --- Files that should produce single items ---
+                    try:
+                        run_info["integrals_all"] = np.load(results_path / INTEGRALS_FILE, allow_pickle=True).item()
+                    except FileNotFoundError:
+                        # If missing, manually replace with empty dict
+                        run_info["integrals_all"] = {}
+
+                    try:
+                        run_info["adv"] = np.load(results_path / ADVANTAGE_FILE, allow_pickle=True).item()
+                    except FileNotFoundError:
+                        try:
+                            run_info["adv"] = np.load(results_path / "adv.npy", allow_pickle=True).item()
+                        except FileNotFoundError:
+                            raise FileNotFoundError(f"Missing required file: {ADVANTAGE_FILE}")
+
+                    try:
+                        run_info["priv_all"] = np.load(results_path / PRIVACY_SCORES_FILE, allow_pickle=True).item()
+                    except FileNotFoundError:
+                        # If missing, fallback to None
+                        run_info["priv_all"] = None
+
+                    # --- Merge args and extras ---
                     run_info.update(args)
                     run_info["portions"] = portions
                     raw_data[portion_key].append(run_info)
+
                 except (FileNotFoundError, json.JSONDecodeError) as e:
                     print(f"Warning: Skipping malformed run at {results_path}: {e}")
                     continue
@@ -496,18 +444,53 @@ class ExperimentVisualizer:
                 continue
             for metric in ["integrals_all", "adv", "priv_all"]:
                 all_metrics = [run[metric] for run in runs]
+                bti_dicts = [run["bti"] for run in runs]
                 if all_metrics:
-                    metric_keys = all_metrics[0].keys()
-                    aggregated = {
-                        k: np.mean([np.array(d[k]) for d in all_metrics], axis=0).tolist()
-                        for k in metric_keys
-                    }
+                    nested_dicts = []
+                    for bti_dict, metrics_dict in zip(bti_dicts, all_metrics):
+                        nested = {}
+                        for budget in bti_dict:
+                            indices = bti_dict[budget]
+                            values = metrics_dict[budget]
+                            nested[budget] = {int(idx): val for idx, val in zip(indices, values)}
+                        nested_dicts.append(nested)
+
+                    # Step 2: merge by max-aggregation
+                    final_dict = defaultdict(lambda: defaultdict(list))  # store lists of values
+                    for nested in nested_dicts:
+                        for budget, idx_val_dict in nested.items():
+                            for idx, val in idx_val_dict.items():
+                                final_dict[budget][idx].append(val)
+                    aggregated = {}
+
+                    for budget in final_dict:
+                        final_dict[budget] = {idx: np.max(val, axis=0) for idx, val in final_dict[budget].items()}
+                    for budget in final_dict:
+                        aggregated[budget] = [val for idx, val in final_dict[budget].items()]
+
+
+                    
+                    # for nested in nested_dicts:
+                    #     for budget, idx_val_dict in nested.items():
+                    #         for idx, val in idx_val_dict.items():
+                    #             if isinstance(final_dict[budget][idx], list) and len(final_dict[budget][idx]) > 0:
+                    #                 final_dict[budget][idx] = final_dict[budget][idx][0]
+                    # metric_keys = all_metrics[0].keys()
+                    # aggregated = {
+                    #     k: np.mean([np.array(d[k]) for d in all_metrics], axis=0).tolist()
+                    #     for k in metric_keys
+                    # }
                     # aggregated = {
                     #     k: [item for d in all_metrics for item in d[k]]  # concatenate all lists for key k
                     #     for k in metric_keys
                     # }    
                     setattr(self, f"aggregated_{metric.replace('_all', '')}", {**getattr(self, f"aggregated_{metric.replace('_all', '')}"), key: aggregated})
+                    setattr(self, f"aggregated_bti_{metric.replace('_all', '')}", {**getattr(self, f"aggregated_bti_{metric.replace('_all', '')}"), key: final_dict})
     
+        print("aggregated")
+
+
+
     def _consolidate_metadata(self, raw_data: Dict[str, List[Dict]]):
         """Extracts and validates metadata from runs."""
         for portion_key, runs in raw_data.items():
@@ -517,9 +500,15 @@ class ExperimentVisualizer:
             self.metadata[portion_key] = {
                 k: first_run.get(k) for k in [
                     "budgets", "portions", "target_delta", "num_steps_list",
-                    "pg_noise_multiplier_list", "pg_sample_rates_list"
+                    "pg_noise_multiplier_list", "pg_sample_rates_list", "pg_cw_list"
                 ]
             }
+            # if np.array(self.metadata[portion_key]["pg_noise_multiplier_list"]).shape[0] == 2:
+            #     self.metadata[portion_key]["pg_noise_multiplier_list"] = [self.metadata[portion_key]["pg_noise_multiplier_list"]]
+            # if np.array(self.metadata[portion_key]["pg_sample_rates_list"]).shape[0] == 2:
+            #     self.metadata[portion_key]["pg_sample_rates_list"] = [self.metadata[portion_key]["pg_sample_rates_list"]]
+            # if np.array(self.metadata[portion_key]["pg_cw_list"]).shape[0] == 2:
+            #     self.metadata[portion_key]["pg_cw_list"] = [self.metadata[portion_key]["pg_cw_list"]]
             # Sanity check for consistency
             for run in runs[1:]:
                 for key, ref_value in self.metadata[portion_key].items():
@@ -539,19 +528,19 @@ class ExperimentVisualizer:
                                 f"Inconsistent '{key}' in '{portion_key}': lists have different lengths "
                                 f"({len(run_value)} vs {len(ref_value)})"
                             )
-                        # if np.all(np.array(run_value) == None):
-                        #     try:
-                        #         if not np.allclose(run_value, ref_value, rtol=0.02, atol=0):
-                        #             raise ValueError(
-                        #                 f"Inconsistent '{key}' in '{portion_key}': "
-                        #                 f"{run_value} vs {ref_value} (list, tolerance 2%)"
-                        #         )
-                        #     except:
-                        #         print("something went wrong")
+                        if np.all(np.array(run_value) == None):
+                            try:
+                                if not np.allclose(run_value, ref_value, rtol=0.02, atol=0):
+                                    raise ValueError(
+                                        f"Inconsistent '{key}' in '{portion_key}': "
+                                        f"{run_value} vs {ref_value} (list, tolerance 2%)"
+                                )
+                            except:
+                                print("something went wrong")
                     # Case 3: everything else -> compare strictly
-                    else:
-                        if run_value != ref_value:
-                            raise ValueError(f"Inconsistent '{key}' in '{portion_key}'.")
+                    # else:
+                    #     if run_value != ref_value:
+                    #         raise ValueError(f"Inconsistent '{key}' in '{portion_key}'.")
     
     def _remove_outliers_as_does_boxplot(self, data):
         """Remove outliers based on the standard boxplot rule (1.5 * IQR)."""
@@ -565,28 +554,76 @@ class ExperimentVisualizer:
         upper_fence = q3 + 1.5 * iqr
         return arr[(arr >= lower_fence) & (arr <= upper_fence)].tolist()
 
-    def statistical_tests(self, data_list, rem_outliers):
-        if rem_outliers:
-            data_list = [self._remove_outliers_as_does_boxplot(data) for data in data_list]
+    def statistical_tests(self, data_list, data_dict_bti):
         results = {}
         results["unpaired_ttests"] = self.unpaired_ttests(data_list)
         # results["repeated_measures_mixed_model"] = self.repeated_measures_mixed_model(data_list)
         results["jonckheere_terpstra"] = self.jonckheere_terpstra(data_list)
         results["jonckheere_terpstra_top_10"] = self.jonckheere_terpstra([sorted(inner, reverse=True)[:int(len(inner)/10)] for inner in data_list])
+        # results["paired_ttests"] = self.paired_ttests_dicts(data_dict_bti)
+        results["cliffs_deltas"] = self.cliffs_deltas(data_list)
         return results
 
-    def run_nested_tests(self, nested_data, name, rem_outliers):
+    def run_nested_tests(self, nested_data, data_dict_bti, name):
         inner_keys = list(next(iter(nested_data.values())).keys())
         list_from_dict = [[outer[k] for outer in nested_data.values()] for k in inner_keys]
-        raw_results = {inner: self.statistical_tests(data, rem_outliers) for inner, data in zip(inner_keys, list_from_dict)}
-        print(f"Statistical tests for {name} (outliers removed: {rem_outliers}):")
-        print(f"{raw_results[inner_keys[0]]['jonckheere_terpstra']}")
-        print(f"{raw_results[inner_keys[1]]['jonckheere_terpstra']}")
-        print(f"{raw_results[inner_keys[0]]['jonckheere_terpstra_top_10']}")
-        print(f"{raw_results[inner_keys[1]]['jonckheere_terpstra_top_10']}")
-        with open(self.output_dir / f"statistical_tests_{name}_{rem_outliers}_{self.dataset}.json", "w") as f:
+        inner_keys = list(next(iter(data_dict_bti.values())).keys())
+        dict_from_dict = [[outer[k] for outer in data_dict_bti.values()] for k in inner_keys]
+        raw_results = {inner: self.statistical_tests(data, data_bit) for inner, data, data_bit in zip(inner_keys, list_from_dict, dict_from_dict)}
+        # print(f"Statistical tests for {name} (outliers removed: {rem_outliers}):")
+        # print(f"{raw_results[inner_keys[0]]['jonckheere_terpstra']}")
+        # print(f"{raw_results[inner_keys[1]]['jonckheere_terpstra']}")
+        # print(f"{raw_results[inner_keys[0]]['jonckheere_terpstra_top_10']}")
+        # print(f"{raw_results[inner_keys[1]]['jonckheere_terpstra_top_10']}")
+        with open(self.output_dir / f"statistical_tests_{name}_{self.dataset}.json", "w") as f:
             json.dump(make_serializable(raw_results), f, indent=4)
    
+
+    def cliffs_delta(self, y, x):
+        """
+        Compute Cliff's delta effect size between two samples.
+        Returns delta and its magnitude category.
+        """
+        x = np.array(x)
+        y = np.array(y)
+        n_x, n_y = len(x), len(y)
+
+        # All pairwise comparisons
+        greater = np.sum(x[:, None] > y)
+        less = np.sum(x[:, None] < y)
+        
+        delta = (greater - less) / (n_x * n_y)
+
+        # Magnitude interpretation (Vargha & Delaney, 2000)
+        abs_delta = abs(delta)
+        if abs_delta < 0.147:
+            size = "negligible"
+        elif abs_delta < 0.33:
+            size = "small"
+        elif abs_delta < 0.474:
+            size = "medium"
+        else:
+            size = "large"
+
+        return delta, size
+
+
+    def cliffs_deltas(self, data_list):
+        """
+        Compute Cliff's delta for consecutive groups in a list of datasets.
+        Returns deltas and magnitude interpretations.
+        """
+        deltas, magnitudes, comparisons = [], [], []
+        for i in range(len(data_list) - 1):
+            d, size = self.cliffs_delta(data_list[i], data_list[i+1])
+            deltas.append(d)
+            magnitudes.append(size)
+            comparisons.append(f"Group{i+1} vs Group{i+2}")
+        return {
+            "comparisons": comparisons,
+            "deltas": deltas,
+            "magnitude": magnitudes
+        }
 
     def unpaired_ttests(self, data_list, alpha=0.05):
         pvals, comparisons = [], []
@@ -603,6 +640,69 @@ class ExperimentVisualizer:
             "bonf_pvals": bonf[1],
             "fdr_significant": fdr[0],
             "fdr_pvals": fdr[1]
+        }
+
+    def paired_ttests_dicts(self, data_list, alpha=0.05):
+        """
+        Perform paired t-tests between consecutive dicts in a list. 
+        Only indices present in both dicts are used for the test.
+        
+        Parameters:
+            data_list (list of dict): Each dict maps indices to values.
+            alpha (float): Significance level for multiple testing correction.
+        
+        Returns:
+            dict: Results including raw p-values, corrected p-values, and significance flags.
+        """
+        pvals, comparisons = [], []
+
+        for i in range(len(data_list) - 1):
+            dict1, dict2 = data_list[i], data_list[i + 1]
+            # Find shared indices
+            shared_keys = set(dict1.keys()).intersection(dict2.keys())
+            
+            if not shared_keys:
+                pvals.append(float('nan'))  # No shared data, mark as NaN
+            else:
+                vals1 = [dict1[k] for k in shared_keys]
+                vals2 = [dict2[k] for k in shared_keys]
+                _, p = stats.ttest_rel(vals1, vals2)
+                pvals.append(p)
+            
+            comparisons.append(f"Group{i+1} vs Group{i+2}")
+        
+        # Handle case where all p-values are NaN
+        if all([p != p for p in pvals]):  # NaN check
+            bonf_significant, bonf_pvals = ["False"]*len(pvals), [float('nan')]*len(pvals)
+            fdr_significant, fdr_pvals = ["False"]*len(pvals), [float('nan')]*len(pvals)
+        else:
+            bonf = multipletests([p for p in pvals if p == p], alpha=alpha, method='bonferroni')
+            fdr = multipletests([p for p in pvals if p == p], alpha=alpha, method='fdr_bh')
+
+            # Reinsert NaNs in the original positions
+            bonf_significant, bonf_pvals = [], []
+            fdr_significant, fdr_pvals = [], []
+            idx = 0
+            for p in pvals:
+                if p != p:  # NaN
+                    bonf_significant.append("False")
+                    bonf_pvals.append(float('nan'))
+                    fdr_significant.append("False")
+                    fdr_pvals.append(float('nan'))
+                else:
+                    bonf_significant.append(str(bonf[0][idx]))
+                    bonf_pvals.append(float(bonf[1][idx]))
+                    fdr_significant.append(str(fdr[0][idx]))
+                    fdr_pvals.append(float(fdr[1][idx]))
+                    idx += 1
+
+        return {
+            "comparisons": comparisons,
+            "raw_pvals": pvals,
+            "bonf_significant": bonf_significant,
+            "bonf_pvals": bonf_pvals,
+            "fdr_significant": fdr_significant,
+            "fdr_pvals": fdr_pvals
         }
 
     def repeated_measures_mixed_model(self, data_list):
@@ -840,19 +940,21 @@ class ExperimentVisualizer:
         linewidth = 1.2
         sr = []
         nm = []
+        cw = []
         num_steps = []
         for p_idx, (p_key, p_info) in enumerate(self.metadata.items()):
             sr.append(p_info["pg_sample_rates_list"][0])
             nm.append(p_info["pg_noise_multiplier_list"][0])
+            cw.append(p_info["pg_cw_list"][0])
             num_steps.append(p_info["num_steps_list"][0])
         for i, budget in enumerate(self.budget_keys):
             for p_idx, (p_key, p_info) in enumerate(self.metadata.items()):
                 epsilons, deltas = self._compute_epsilon_delta_curve(
-                    noise_multiplier=p_info["pg_noise_multiplier_list"][0][i],
-                    deltas=np.logspace(-14, -1, 50),
+                    noise_multiplier=p_info["pg_noise_multiplier_list"][0][i]/p_info["pg_cw_list"][0][i],
+                    deltas=np.logspace(-14, -1, 300),
                     iterations=p_info["num_steps_list"][0],
                     sampling_rate=p_info["pg_sample_rates_list"][0][i],
-                    clipping_norm=1
+                    clipping_norm=1,
                 )
                 label = generate_latex_label(p_info["portions"], i)
                 plot_handle, = ax.plot(epsilons, deltas, color=self.colors[i][p_idx + 3], alpha=0.9, linewidth=linewidth, label=label)
@@ -900,9 +1002,16 @@ class ExperimentVisualizer:
         print(f"✅ Epsilon-Delta curves saved to {self.output_dir}")
 
     def _compute_epsilon_delta_curve(self, noise_multiplier, deltas, iterations, sampling_rate, clipping_norm):
+        from dp_accounting.pld import privacy_loss_distribution
         """
         Compute epsilon for a range of deltas using the RDP accountant.
         """
+        # def compute_epsilon_2(noise_multiplier, delta, iterations, sampling_rate, clipping_norm, deltas):
+        #     mech = privacy_loss_distribution.from_gaussian_mechanism(
+        #         standard_deviation=noise_multiplier,
+        #         sampling_prob=sampling_rate).self_compose(iterations[0])
+        #     epsilons = [mech.get_epsilon_for_delta(deta) for deta in deltas]
+        #     return epsilons, deltas
         def compute_epsilon(noise_multiplier, delta, iterations, sampling_rate, clipping_norm):
             accountant = RDPAccountant()
             if iterations[0] is None:
@@ -910,7 +1019,7 @@ class ExperimentVisualizer:
             if "exp_mia_final_clipping" in str(self.base_path):
                 # Custom logic if needed for clipping experiments
                 pass
-            accountant.history = [(noise_multiplier, sampling_rate, int(iterations[0]))]
+            accountant.history = [(noise_multiplier/clipping_norm, sampling_rate, int(iterations[0]))]
             return accountant.get_epsilon(delta)
         epsilons = []
         deltas2 = []
@@ -918,6 +1027,7 @@ class ExperimentVisualizer:
             epsilon = compute_epsilon(noise_multiplier, delta, iterations, sampling_rate, clipping_norm)
             epsilons.append(epsilon)
             deltas2.append(delta)
+        # epsilons, deltas2 = compute_epsilon_2(noise_multiplier, deltas, iterations, sampling_rate, clipping_norm, deltas)
         return epsilons, deltas2
 
     def plot_privacy_tradeoff(self):
@@ -927,7 +1037,7 @@ class ExperimentVisualizer:
         """
         n_budgets = len(self.budget_keys)
         fig, axes = plt.subplots(n_budgets, 2, figsize=(6, 4 * n_budgets), squeeze=False)
-        alpha_grid = np.linspace(0, 1, 200)
+        alphas = np.linspace(0, 1, 10000)
 
         for r, budget_key in enumerate(self.budget_keys):
             ax_curve, ax_bar = axes[r, 0], axes[r, 1]
@@ -939,18 +1049,24 @@ class ExperimentVisualizer:
                     "steps": p_info["num_steps_list"][0],
                     "sample_rate": p_info["pg_sample_rates_list"][0][r],
                 }
-                envelope = self._compute_tradeoff_envelope(params, alpha_grid)
+                alphas, envelope = self._compute_tradeoff_envelope(params, alphas)
                 
                 # Plotting
-                label = generate_latex_label(p_info["portions"], 1 if r == 0 else 0)
-                ax_curve.plot(alpha_grid, envelope, color=self.colors[r][p_idx + 3], linewidth=2, label=label)
-                
+                label = generate_latex_label(p_info["portions"], 1 if r == 1 else 0)
+                # test = np.argmax(envelope, axis=0)
+                # envelope = np.max(envelope, axis=0)
+                ax_curve.plot(alphas, envelope, color=self.colors[r][p_idx + 3], linewidth=2, label=label)
+
+                # from scipy.ndimage import gaussian_filter1d
+                # smoothed_envelope = gaussian_filter1d(envelope, sigma=10)  # adjust sigma for more/less smoothing
+                # ax_curve.plot(alpha_grid, smoothed_envelope, color="black", linewidth=0.2, label=label)
+
                 # Advantage calculation
-                trivial = 1 - alpha_grid
+                trivial = 1 - alphas
                 diff = trivial - envelope
                 max_idx = np.argmax(np.nan_to_num(diff))
                 advantages[p_key] = diff[max_idx]
-                ax_curve.plot([alpha_grid[max_idx], alpha_grid[max_idx]], [envelope[max_idx], trivial[max_idx]],
+                ax_curve.plot([alphas[max_idx], alphas[max_idx]], [envelope[max_idx], trivial[max_idx]],
                               color=self.colors[r][p_idx + 3], linestyle=":", linewidth=1)
 
             # Format curve plot
@@ -962,7 +1078,7 @@ class ExperimentVisualizer:
             ax_curve.legend()
 
             # Format bar plot
-            x_labels = [generate_latex_label(self.metadata[k]["portions"], 1 if r == 0 else 0) for k in advantages.keys()]
+            x_labels = [generate_latex_label(self.metadata[k]["portions"], 1 if r == 1 else 0) for k in advantages.keys()]
             y_values = list(advantages.values())
             colors = self.colors[r][3:]
             ax_bar.bar(range(len(x_labels)), y_values, color=colors, width=0.5)
@@ -979,18 +1095,60 @@ class ExperimentVisualizer:
         print(f"✅ Privacy trade-off plots saved to {self.output_dir}")
 
     @staticmethod
-    def _f_eps_delta(alpha: np.ndarray, epsilon: float, delta: float) -> np.ndarray:
+    def _f_eps_delta(alpha: np.ndarray, accountant: RDPAccountant, delta: float) -> np.ndarray:
         """Piecewise linear trade-off function f_{ε, δ}."""
-        return np.maximum(0, np.maximum(1 - delta - np.exp(epsilon) * alpha, np.exp(-epsilon) * (1 - delta - alpha)))
+        epsilon = accountant.get_epsilon(delta)
+        result = np.maximum(0, np.maximum(1 - delta - np.exp(epsilon) * alpha, np.exp(-epsilon) * (1 - delta - alpha)))
+        return result
 
-    def _compute_tradeoff_envelope(self, params: Dict, alpha_grid: np.ndarray) -> np.ndarray:
-        """Computes the envelope of all trade-off curves for given params."""
-        accountant = RDPAccountant()
-        accountant.history = [(params["noise_multiplier"], params["sample_rate"], params["steps"])]
-        deltas = np.linspace(0, 1, 2000)
+    # def _compute_tradeoff_envelope(self, params: Dict, alpha_grid: np.ndarray) -> np.ndarray:
+    #     """Computes the envelope of all trade-off curves for given params."""
+    #     accountant = RDPAccountant()
+    #     accountant.history = [(params["noise_multiplier"], params["sample_rate"], params["steps"])]
+    #     deltas = np.linspace(0, 1, 5000)
         
-        f_values = [self._f_eps_delta(alpha_grid, accountant.get_epsilon(d), d) for d in deltas]
-        return np.max(np.array(f_values), axis=0)
+        # f_values = [self._f_eps_delta(alpha_grid, accountant.get_epsilon(d), d) for d in deltas]
+        # return np.max(np.array(f_values), axis=0)
+    # def _compute_tradeoff_envelope(self, params: Dict, alpha_grid: np.ndarray) -> np.ndarray:
+    #     """Computes the envelope of all trade-off curves for given params."""
+    #     accountant = RDPAccountant()
+    #     accountant.history = [(params["noise_multiplier"], params["sample_rate"], params["steps"])]
+    #     deltas = np.concatenate([np.logspace(-20, -2, 100), np.linspace(1e-2, 1-1e-2, 2000), 1 - np.logspace(-2, -20, 100), 1 - np.logspace(-20, -50, 100)]) #np.linspace(0, 1, 5000)
+
+    #     # Parallel execution across 24 CPUs
+    #     f_values = Parallel(n_jobs=24)(
+    #         delayed(self._f_eps_delta)(alpha_grid, accountant, d)
+    #         for d in deltas
+    #     )
+    #     # f_values = [self._f_eps_delta(alpha_grid, accountant.get_epsilon(d), d) for d in deltas]
+
+    #     return np.array(f_values)
+
+    def _compute_tradeoff_envelope(self, params: Dict, alphas: np.ndarray) -> np.ndarray:
+        from dp_accounting.pld import privacy_loss_distribution
+        def profile2tradeoff(alpha, eps, delta):
+            term1 = 1.0 - delta - np.exp(eps)*alpha
+            term2 = (1.0 - delta - alpha)*np.exp(-eps)
+            return np.maximum(0.0, np.maximum(term1, term2))
+
+        def ADP2fDP(alphas, epsilons, deltas):
+            betas = []
+            for alpha in alphas:
+                B = profile2tradeoff(alpha, np.asarray(epsilons), np.asarray(deltas))
+                betas.append(np.max(B))
+            return betas
+        """Computes the trade-off curve for given params using PLD."""
+        sigma = params["noise_multiplier"]
+        p = params["sample_rate"]
+        N = params["steps"][0]
+        epsila = np.linspace(-10, 10, 10000)
+        mech = privacy_loss_distribution.from_gaussian_mechanism(
+            standard_deviation=sigma,
+            sampling_prob=p).self_compose(N)
+        deltas = mech.get_delta_for_epsilon(epsila)
+        tradeoff = ADP2fDP(alphas, epsila, deltas)
+
+        return alphas, tradeoff
 
 # =============================================================================
 # SCRIPT EXECUTION
@@ -1013,17 +1171,15 @@ if __name__ == "__main__":
                 budgets=config["budgets"],
                 portions_list=config["portions_list"],
             )
-            # visualizer.run_nested_tests(visualizer.aggregated_priv, "priv", rem_outliers=True)
-            # visualizer.run_nested_tests(visualizer.aggregated_priv, "priv", rem_outliers=False)
-            # visualizer.run_nested_tests(visualizer.aggregated_adv, "adv", rem_outliers=True)
-            # visualizer.run_nested_tests(visualizer.aggregated_adv, "adv", rem_outliers=False)
+            visualizer.plot_privacy_tradeoff()
+            # visualizer.plot_epsilon_delta_curves()
+            visualizer.run_nested_tests(visualizer.aggregated_priv, visualizer.aggregated_bti_priv, "priv")
+            # visualizer.run_nested_tests(visualizer.aggregated_adv, visualizer.aggregated_bti_adv, "adv")
             # visualizer.plot_single_violings(visualizer.aggregated_adv, "adv")
             # visualizer.plot_single_violings(visualizer.aggregated_priv, "priv")
             # visualizer.plot_single_boxplots(visualizer.aggregated_adv, "adv")
-            # visualizer.plot_single_boxplots(visualizer.aggregated_priv, "priv")
+            visualizer.plot_single_boxplots(visualizer.aggregated_priv, "priv")
             # visualizer.plot_mia_analysis_grid()
-            visualizer.plot_epsilon_delta_curves()
-            # visualizer.plot_privacy_tradeoff()
             
         except Exception as e:
             print(f"💥 Error processing experiment for {config['dataset']}: {e}")
