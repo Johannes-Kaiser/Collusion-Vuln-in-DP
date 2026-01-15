@@ -1,0 +1,37 @@
+# Experiment configuration for MIA
+# All parameters correspond to argparse arguments in mia.py
+
+dataset: kaggle_cervical
+model: null
+lr: 0.01
+batchsize: 64
+epochs: 50
+n_shadows: 5
+n_targets: 512
+pkeep: 0.5
+debug: false
+n_queries: 2
+private: true
+adapt_weights_to_budgets: true
+accountant: rdp
+individualize: sampling
+weights: null
+target_delta: 1e-12
+max_grad_norm: 1.0
+portions:
+  - 0.2
+  - 0.4
+  - 0.6
+  - 0.8
+budgets:
+  - 16.0
+  - 50.0
+n_parallel: 8
+disable_inner: true
+seed: 42
+train_and_save_models: false
+compute_and_save_logits: false
+compute_and_save_scores: false
+compute_and_save_stats: true
+plot_results: false
+test_model: false

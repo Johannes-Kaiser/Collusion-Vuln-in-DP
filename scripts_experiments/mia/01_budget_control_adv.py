@@ -1,3 +1,34 @@
+"""
+Budget Manipulation Attack - Main Experimental Script.
+
+This module implements the primary attack demonstrating how adversaries can
+manipulate privacy budgets to create system-level privacy degradation in
+differentially private machine learning systems.
+
+The attack works by:
+1. Training models with varying per-instance privacy budgets
+2. Computing privacy allocation strategies to maximize attack success
+3. Evaluating membership inference attack vulnerability across instances
+4. Aggregating results across multiple random seeds for statistical significance
+
+Key Features:
+    - YAML-based configuration for easy experiment parameterization
+    - Support for multiple datasets (vision, medical, tabular)
+    - Flexible privacy budget allocation strategies
+    - Per-instance privacy tracking and analysis
+    - Multi-seed execution with parallel processing
+
+Output:
+    Results are saved to budget_adv_final_by_dataset/{dataset}/{seed}/ containing:
+    - mia_scores.json: Per-instance membership inference success rates
+    - privacy_budgets.json: Allocated privacy budgets
+    - model_logits.pt: Model predictions for analysis
+
+Usage:
+    python 01_budget_control_adv.py --config exp_yaml/budget_control_adv_cifar10.yaml
+    
+See scripts_experiments/README.md for detailed workflow examples.
+"""
 import sys
 sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 

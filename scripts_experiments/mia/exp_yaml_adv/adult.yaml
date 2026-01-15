@@ -1,0 +1,33 @@
+# Experiment configuration for MIA
+# All parameters correspond to argparse arguments in mia.py
+
+dataset: adult
+model: null
+lr: 0.01
+epochs: 3
+n_targets: 128
+pkeep: 0.5
+debug: false
+n_queries: 2
+private: true
+adapt_weights_to_budgets: true
+accountant: rdp
+individualize: sampling
+weights: null
+target_delta: 1e-10
+max_grad_norm: 1.0
+budgets:
+  - 2.0
+  - 4.0
+  - 8.0
+  - 16.0
+budgets_attackee: 16.0
+n_parallel: 1
+disable_inner: true
+seed: 42
+train_and_save_models: true
+compute_and_save_logits: true
+compute_and_save_scores: true
+compute_and_save_stats: true
+plot_results: false
+test_model: false

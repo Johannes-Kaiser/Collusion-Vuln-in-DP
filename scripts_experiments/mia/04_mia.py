@@ -1,7 +1,27 @@
-# Adaptation of PyTorch implementation of
-# https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/train.py
-#
-# author: Chenxiang Zhang (orientino)
+"""
+Membership Inference Attack (MIA) Implementation using LiRA.
+
+This module implements the LiRA-based membership inference attack for evaluating
+privacy vulnerabilities in differentially private models. It performs shadow
+model training and likelihood ratio analysis to determine membership.
+
+The implementation is an adaptation of the PyTorch version of:
+    https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/train.py
+
+Original Author: Chenxiang Zhang (orientino)
+
+Key Components:
+    - Shadow model training with configurable privacy budgets
+    - Likelihood ratio computation for membership scoring
+    - Multi-seed evaluation with parallel processing
+    - Per-instance membership probability estimation
+
+Usage:
+    python 04_mia.py --config config.yaml --output results/
+    
+Configuration:
+    See exp_yaml/ directory for example configurations.
+"""
 import sys
 sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 

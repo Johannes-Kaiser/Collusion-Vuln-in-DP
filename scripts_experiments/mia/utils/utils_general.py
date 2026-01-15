@@ -1,101 +1,136 @@
+"""Utility functions for differential privacy experiments with PyTorch.
+
+This module provides utilities for:
+- Loading and preprocessing various datasets (vision, tabular, and medical)
+- Defining neural network models for different dataset types
+- Privacy-preserving model training using Opacus
+- Data loading and batch processing
+"""
+
+import gc
 import os
-import torch
-import yaml
-import argparse
+from collections import defaultdict
+from typing import Optional, Tuple, List, Dict, Any
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, SVHN
-from torchvision import transforms
-from torchvision.models import resnet18, vgg11
-from opacus_new import PrivacyEngine
-from sklearn.datasets import load_breast_cancer, fetch_openml
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelBinarizer, MinMaxScaler
-import kagglehub
-from collections import defaultdict
-from sklearn.preprocessing import LabelEncoder
+import torch
 import torch.nn as nn
+import yaml
+import argparse
+from tqdm import tqdm
+
+# Torchvision imports
+from torchvision import transforms
+from torchvision.datasets import MNIST, CIFAR10, FashionMNIST, SVHN
+from torchvision.models import resnet18, vgg11
+
+# Scikit-learn imports
+from sklearn.datasets import load_breast_cancer, fetch_openml
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import (
+    StandardScaler,
+    LabelBinarizer,
+    MinMaxScaler,
+    LabelEncoder,
+)
+
+# Medical datasets
 import medmnist
 from medmnist import INFO
 
-datasets_info = {
-    # Vision datasets
+# Kaggle integration
+import kagglehub
+
+# Privacy
+from opacus_new import PrivacyEngine
+
+# ============================================================================
+# Dataset Configuration
+# ============================================================================
+
+DATASETS_INFO = {
+    # Vision datasets - MNIST variants and CIFAR
     "mnist": {"classes": 10, "input_features": 28 * 28, "model_type": "mlp"},
-    "mnist_4": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"}, 
+    "mnist_4": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
     "mnist_2": {"classes": 2, "input_features": 28 * 28, "model_type": "mlp"},
     "mnist_4_small": {"classes": 4, "input_features": 28 * 28, "model_type": "mlp"},
     "cifar10": {"classes": 10, "input_features": 3, "model_type": "simple_cnn", "num_spatial": 32},
     "fashionmnist": {"classes": 10, "input_features": 1, "model_type": "simple_cnn", "num_spatial": 32},
     "svhn": {"classes": 10, "input_features": 1, "model_type": "simple_cnn", "num_spatial": 32},
-
-    # Tabular datasets (sklearn & OpenML)
+    
+    # Tabular datasets from sklearn and OpenML
     "breast_cancer": {"classes": 2, "input_features": 30, "model_type": "mlp"},
     "adult": {"classes": 2, "input_features": 105, "model_type": "mlp"},
     "german_credit": {"classes": 2, "input_features": 59, "model_type": "mlp"},
     "bank_marketing": {"classes": 2, "input_features": 16, "model_type": "mlp"},
     "credit_card_default": {"classes": 2, "input_features": 59, "model_type": "mlp"},
     "uci_isolet": {"classes": 26, "input_features": 617, "model_type": "mlp"},
-
+    
     # Kaggle datasets
     "kaggle_credit": {"classes": 2, "input_features": 25, "model_type": "mlp"},
     "kaggle_cervical": {"classes": 2, "input_features": 32, "model_type": "mlp"},
     "compas": {"classes": 2, "input_features": 24, "model_type": "mlp"},
-    
 }
 
-
+# Add MedMNIST datasets from the INFO registry
 for dataset_name, info in INFO.items():
     n_classes = len(info["label"].keys())
-    n_channels = 3 if info["n_channels"] == 3 else 1  # most are grayscale, some RGB
-    if dataset_name == "dermamnist":
-        datasets_info[dataset_name] = {
-            "classes": n_classes,
-            "input_features": 3,   # for CNNs we treat channels as input
-            "model_type": "resnet9" ,
-            "num_spatial": 28     # CNN is more suitable than MLP for images  
-        }
-    else:
-        datasets_info[dataset_name] = {
-            "classes": n_classes,
-            "input_features": n_channels,   # for CNNs we treat channels as input
-            "model_type": "simple_cnn" ,
-            "num_spatial": 28     # CNN is more suitable than MLP for images
-        }
+    n_channels = info["n_channels"]
+    
+    # DermaMNIST uses ResNet9, others use simple CNN
+    model_type = "resnet9" if dataset_name == "dermamnist" else "simple_cnn"
+    
+    DATASETS_INFO[dataset_name] = {
+        "classes": n_classes,
+        "input_features": n_channels,
+        "model_type": model_type,
+        "num_spatial": 28,
+    }
 
-def to_padded_array(list_of_lists):
-    # Find the maximum length of inner lists
+
+# ============================================================================
+# Utility Functions - Data Processing
+# ============================================================================
+
+def to_padded_array(list_of_lists: List) -> np.ndarray:
+    """Convert a list of lists with variable lengths to a padded numpy array.
+    
+    Args:
+        list_of_lists: List of lists or scalar values with potentially different lengths.
+        
+    Returns:
+        Padded numpy array with dtype=object.
+    """
     lengths = []
     for lst in list_of_lists:
-        if lst is None:
-            lengths.append(1)
-        elif isinstance(lst, int):
+        if lst is None or isinstance(lst, int):
             lengths.append(1)
         else:
-            lengths += [len(lst)]
+            lengths.append(len(lst))
+    
     max_len = max(lengths)
-    # Pad each list with None to match the maximum length
     padded = []
-    if lst is None or isinstance(lst, int):
-        padded.append([lst] + [0]*(max_len-1))
-    else:
-        padded.append(lst + [0] * (max_len - len(lst)))
-
+    for lst in list_of_lists:
+        if lst is None or isinstance(lst, int):
+            padded.append([lst] + [0] * (max_len - 1))
+        else:
+            padded.append(lst + [0] * (max_len - len(lst)))
+    
     return np.array(padded, dtype=object)
 
-def assign_pp_values(
-    pp_budgets,
-    values,
-):
-    r"""
-    Assigns a value to each data point according to the given per-point budgets.
+def assign_pp_values(pp_budgets: np.ndarray, values: List) -> torch.Tensor:
+    """Assign values to samples based on their privacy budgets.
+    
+    Maps each unique privacy budget to a corresponding value and assigns
+    those values to all samples with that budget.
+    
     Args:
-        pp_budgets: the privacy budget's epsilon for each data point
-        values: list of values to be assigned to all data points
+        pp_budgets: Privacy budget (epsilon) for each data point.
+        values: List of values to assign, indexed by unique budgets in sorted order.
+        
     Returns:
-        An array of size equal to the training dataset size that contains one
-        value for each data point.
+        Tensor of assigned values, one per data point.
     """
     pp_values = np.zeros(len(pp_budgets))
     for i, budget in enumerate(np.sort(np.unique(pp_budgets))):
@@ -103,9 +138,24 @@ def assign_pp_values(
     return torch.Tensor(pp_values)
 
 
-def reduce_class_samples(X_tensor, y_tensor, max_samples_per_class):
+def reduce_class_samples(
+    X_tensor: torch.Tensor,
+    y_tensor: torch.Tensor,
+    max_samples_per_class: Optional[int],
+) -> Tuple[torch.utils.data.TensorDataset, torch.Tensor, torch.Tensor]:
+    """Limit the number of samples per class in a dataset.
+    
+    Args:
+        X_tensor: Feature tensor.
+        y_tensor: Label tensor.
+        max_samples_per_class: Maximum number of samples to keep per class.
+                              If None, returns original tensors unchanged.
+    
+    Returns:
+        Tuple of (TensorDataset, X_tensor_selected, y_tensor_selected).
+    """
     if max_samples_per_class is None:
-        return X_tensor, y_tensor  # nothing to do
+        return torch.utils.data.TensorDataset(X_tensor, y_tensor), X_tensor, y_tensor
 
     selected_indices = []
     y_np = y_tensor.cpu().numpy()
@@ -114,54 +164,144 @@ def reduce_class_samples(X_tensor, y_tensor, max_samples_per_class):
         unique_class = unique_class.item()
         cls_indices = (y_np == unique_class).nonzero()[0]
 
-        # randomly pick at most max_samples_per_class indices
+        # Select at most max_samples_per_class indices per class
         if len(cls_indices) > max_samples_per_class:
             chosen = cls_indices[:max_samples_per_class].tolist()
         else:
             chosen = cls_indices.tolist()
 
         selected_indices.extend(chosen)
-        selected_indices.sort()
 
-    selected_indices = torch.tensor(selected_indices, dtype=torch.long)
-    X_tensor, y_tensor =  X_tensor[selected_indices], y_tensor[selected_indices]
-    return torch.utils.data.TensorDataset(X_tensor, y_tensor), X_tensor, y_tensor
+    selected_indices = torch.tensor(sorted(selected_indices), dtype=torch.long)
+    X_selected = X_tensor[selected_indices]
+    y_selected = y_tensor[selected_indices]
+    
+    dataset = torch.utils.data.TensorDataset(X_selected, y_selected)
+    return dataset, X_selected, y_selected
 
-def generate_string(list1, list2, sep1=": ", sep2=","):
+
+def generate_string(
+    list1: List,
+    list2: List,
+    sep1: str = ": ",
+    sep2: str = ",",
+) -> str:
+    """Generate a formatted string from two parallel lists.
+    
+    Args:
+        list1: Keys or first elements.
+        list2: Values or second elements.
+        sep1: Separator between key and value. Default: ": ".
+        sep2: Separator between pairs. Default: ",".
+        
+    Returns:
+        Formatted string like "key1: val1,key2: val2".
+        
+    Raises:
+        ValueError: If lists have different lengths.
+    """
     if len(list1) != len(list2):
         raise ValueError("Lists must be of the same length.")
-    return sep2.join(f"{k}{sep1}{v}" for k, v in zip(list1, list2))#
+    return sep2.join(f"{k}{sep1}{v}" for k, v in zip(list1, list2))
 
 
-def extend_dict(dict1, dict2):
+def extend_dict(dict1: Dict, dict2: Dict) -> Dict:
+    """Extend dict1 with key-value pairs from dict2 if keys don't exist.
+    
+    Args:
+        dict1: Dictionary to extend (modified in-place).
+        dict2: Dictionary with items to add.
+        
+    Returns:
+        Updated dict1.
+    """
     for k, v in dict2.items():
         if k not in dict1:
             dict1[k] = v
     return dict1
 
-def get_budget_to_index_from_seeds(savedir, seeds):
+def get_budget_to_index_from_seeds(savedir: str, seeds: List[int]) -> Dict:
+    """Load and verify budget-to-index mappings across multiple training seeds.
+    
+    Ensures all seeds use identical privacy budget assignments.
+    
+    Args:
+        savedir: Directory containing seed subdirectories with "bti.npy" files.
+        seeds: List of seed values corresponding to subdirectories.
+        
+    Returns:
+        Budget-to-index mapping dictionary.
+        
+    Raises:
+        AssertionError: If seeds have inconsistent budget assignments.
+    """
     budget_to_index_list = []
     for seed in seeds:
         bti_path = os.path.join(savedir, str(seed), "bti.npy")
         with open(bti_path, "rb") as f:
             budget_to_index = np.load(f, allow_pickle=True).item()
         budget_to_index_list.append(budget_to_index)
-        # Check if all dicts in budget_to_index_list contain the same values
-        first_bti = budget_to_index_list[0]
-        for bti in budget_to_index_list[1:]:
-            assert first_bti.keys() == bti.keys(), "Target models need to have the same pp_budgets (keys mismatch)"
-            for key in first_bti.keys():
-                assert np.array_equal(first_bti[key], bti[key]), f"Target models need to have the same pp_budgets for key {key}"
+    
+    # Verify all seeds use identical budgets
+    first_bti = budget_to_index_list[0]
+    for bti in budget_to_index_list[1:]:
+        assert first_bti.keys() == bti.keys(), "Target models have inconsistent pp_budgets (keys mismatch)"
+        for key in first_bti.keys():
+            assert np.array_equal(first_bti[key], bti[key]), (
+                f"Target models have inconsistent pp_budgets for key {key}"
+            )
+    
     return first_bti
 
-# Construct default_path from dataset, budgets, and portions
-def get_dataset_size(dataset_name, train, num_max_per_class_samples):
-    dummy_train_ds = load_dataset(dataset_name, train=train, num_max_samples=num_max_per_class_samples)
-    return len(dummy_train_ds)
 
-def generate_pp_budgets(seed, size, portions, budgets):
-    # Assign privacy budgets to each sample in the dataset
-    assert abs(sum(portions) - 1.0) < 1e-6, "Portions must sum to 1."
+def get_dataset_size(
+    dataset_name: str,
+    train: bool,
+    num_max_per_class_samples: Optional[int],
+) -> int:
+    """Get the total number of samples in a dataset.
+    
+    Args:
+        dataset_name: Name of the dataset to load.
+        train: Whether to load training or test split.
+        num_max_per_class_samples: Maximum samples per class (if applicable).
+        
+    Returns:
+        Total number of samples in the dataset.
+    """
+    dataset = load_dataset(
+        dataset_name,
+        train=train,
+        num_max_samples=num_max_per_class_samples,
+    )
+    return len(dataset)
+
+
+def generate_pp_budgets(
+    seed: int,
+    size: int,
+    portions: List[float],
+    budgets: List[float],
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Assign privacy budgets to samples with specified proportions.
+    
+    Divides the dataset into groups with different privacy budgets,
+    respecting the given proportions, and shuffles to avoid ordering bias.
+    
+    Args:
+        seed: Random seed for reproducibility.
+        size: Total number of samples.
+        portions: Fractions of samples for each budget (must sum to ~1.0).
+        budgets: Privacy budgets (epsilon values) for each portion.
+        
+    Returns:
+        Tuple of (pp_budgets, budget_to_index) where:
+        - pp_budgets: Privacy budget assigned to each sample.
+        - budget_to_index: Mapping from budget values to sample indices.
+    """
+    assert abs(sum(portions) - 1.0) < 1e-6, "Portions must sum to approximately 1.0"
+    
+    # Assign budgets to samples based on portions
     pp_budgets = np.zeros(size)
     start = 0
     for portion, budget in zip(portions, budgets):
@@ -170,110 +310,202 @@ def generate_pp_budgets(seed, size, portions, budgets):
             end = size
         pp_budgets[start:end] = budget
         start = end
-    # If rounding caused a mismatch, fill the rest with the last budget
+    
+    # Handle rounding errors
     if start < size:
         pp_budgets[start:] = budgets[-1]
 
-    # Randomly shuffle pp_budgets to avoid any ordering bias
-    np.random.seed(seed)  # Set seed
+    # Shuffle to avoid ordering bias
+    np.random.seed(seed)
     shuffled_indices = np.random.permutation(size)
     pp_budgets = pp_budgets[shuffled_indices]
-    # Log indices for each unique budget
+    
+    # Create mapping from budget to sample indices
     budget_to_index = {}
-    unique_budgets = np.unique(pp_budgets)
-    for budget in unique_budgets:
+    for budget in np.unique(pp_budgets):
         indices = np.where(pp_budgets == budget)[0]
         budget_to_index[str(budget)] = indices
+    
     return pp_budgets, budget_to_index
 
-def format_list(lst):
-    return "_".join(str(x).replace('.', '').replace('-', 'm') for x in lst)
+
+def format_list(lst: List) -> str:
+    """Format a list as a string suitable for filenames.
+    
+    Converts list elements to strings with special formatting:
+    - Removes decimal points
+    - Replaces negative signs with 'm'
+    - Joins with underscores
+    
+    Args:
+        lst: List of values to format.
+        
+    Returns:
+        Formatted string suitable for use in filenames.
+    """
+    return "_".join(str(x).replace(".", "").replace("-", "m") for x in lst)
 
 
-def load_yaml_args(yaml_path):
-    with open(yaml_path, 'r') as f:
+
+
+# ============================================================================
+# Configuration Utilities
+# ============================================================================
+
+
+def load_yaml_args(yaml_path: str) -> Dict[str, Any]:
+    """Load experiment configuration from a YAML file.
+    
+    Converts string 'null' values to None for proper type handling.
+    
+    Args:
+        yaml_path: Path to YAML configuration file.
+        
+    Returns:
+        Configuration dictionary.
+    """
+    with open(yaml_path, "r") as f:
         config = yaml.safe_load(f)
-    # Convert None strings to None
+    
+    # Convert 'null' strings to None
     for k, v in config.items():
-        if isinstance(v, str) and v.lower() == 'null':
+        if isinstance(v, str) and v.lower() == "null":
             config[k] = None
+    
     return config
 
-def parse_args_with_yaml():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_yaml', type=str, help='YAML file with experiment parameters', default='./scripts_experiments/mia/exp_yaml/temp_2/dermamnist_small.yaml')
-    parser.add_argument('--individualize', type=str, help='YAML file with experiment parameters', default='sampling')
-    parser.add_argument('--name_ext', type=str, help='Name extension for the experiment', default='temp')
-    parser.add_argument("--seed", type=int, default=2)
 
-    # parser.add_argument('--num_max_per_class_samples', default=None)
+def parse_args_with_yaml() -> argparse.Namespace:
+    """Parse command-line arguments and merge with YAML configuration.
+    
+    Command-line arguments take precedence over YAML config values.
+    
+    Returns:
+        Namespace with merged configuration.
+    """
+    parser = argparse.ArgumentParser(description="Run differential privacy experiments")
+    parser.add_argument(
+        "--exp_yaml",
+        type=str,
+        help="YAML file with experiment parameters",
+        default="./scripts_experiments/mia/exp_yaml/temp_2/dermamnist_small.yaml",
+    )
+    parser.add_argument(
+        "--individualize",
+        type=str,
+        help="Individualization method (sampling or clipping)",
+        default="sampling",
+    )
+    parser.add_argument(
+        "--name_ext",
+        type=str,
+        help="Name extension for the experiment",
+        default="temp",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed",
+        default=2,
+    )
+
     args = parser.parse_args()
     config = load_yaml_args(args.exp_yaml)
+    
+    # Merge command-line arguments into config
     for k, v in vars(args).items():
-        if k == "exp_yaml":
+        if k == "exp_yaml" or v is None:
             continue
-        if v is not None:
-            if k in config and config[k] != v:
-                print(f"Overwriting config value for '{k}': {config[k]} -> {v}")
-            config[k] = v
+        if k in config and config[k] != v:
+            print(f"Overwriting config value for '{k}': {config[k]} -> {v}")
+        config[k] = v
+    
     config["target_delta"] = float(config["target_delta"])
     return argparse.Namespace(**config)
 
 
-def train_loop(params, model, train_loader, criterion, optimizer, sched, device, epochs, pp_max_grad_norms=None):
-    """
-    Generic training loop for PyTorch models, compatible with Opacus-privatized models.
+# ============================================================================
+# Training Utilities
+# ============================================================================
 
+
+def train_loop(
+    params: argparse.Namespace,
+    model: nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    sched: Optional[torch.optim.lr_scheduler._LRScheduler],
+    device: torch.device,
+    epochs: int,
+    pp_max_grad_norms: Optional[torch.Tensor] = None,
+) -> nn.Module:
+    """Training loop for PyTorch models, compatible with Opacus DP training.
+    
+    Supports both standard and differentially-private training via per-sample
+    gradient norms.
+    
     Args:
+        params: Configuration namespace (must contain 'disable_inner' if present).
         model: PyTorch model to train.
         train_loader: DataLoader for training data.
+                      Batches should have 2 or 3 elements: (inputs, targets[, idx]).
         criterion: Loss function.
-        optimizer: Optimizer.
+        optimizer: Optimizer. For DP training, must support pp_max_grad_norms parameter.
+        sched: Learning rate scheduler, or None to skip scheduling.
         device: Device to train on ('cpu' or 'cuda').
         epochs: Number of epochs to train.
-        pp_max_grad_norms: Optional per-sample max grad norms for Opacus DP training.
+        pp_max_grad_norms: Optional per-sample max grad norms for DP training.
+                          Should have shape (dataset_size,).
+    
+    Returns:
+        Trained model.
+        
+    Raises:
+        ValueError: If batch size is not 2 or 3.
     """
     model.to(device)
     model.train()
-    disable_inner = params.disable_inner if hasattr(params, 'disable_inner') else params.get('disable_inner', False)
+    disable_inner = getattr(params, "disable_inner", False)
 
     for epoch in range(epochs):
         running_loss = 0.0
         correct = 0
         total = 0
-
         class_correct = defaultdict(int)
         class_total = defaultdict(int)
 
         for batch in train_loader:
+            # Handle variable batch formats
             if len(batch) == 2:
                 inputs, targets = batch
                 idx = None
             elif len(batch) == 3:
                 inputs, targets, idx = batch
             else:
-                raise Exception("Batch must have 2 or 3 elements (inputs, targets, [idx])")
+                raise ValueError("Batch must have 2 or 3 elements: (inputs, targets[, idx])")
 
-            inputs, targets = inputs.to(device), targets.to(device)
+            inputs = inputs.to(device)
+            targets = targets.to(device)
 
+            # Forward pass
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
 
+            # Backward pass with optional DP gradient clipping
             if idx is None or pp_max_grad_norms is None:
                 optimizer.step()
             else:
                 optimizer.step(pp_max_grad_norms=pp_max_grad_norms[idx].to(device))
 
+            # Accumulate statistics
             running_loss += loss.item()
-
-            # Compute batch accuracy
             _, predicted = outputs.max(1)
             correct += (predicted == targets).sum().item()
             total += targets.size(0)
 
-            # Update per-class accuracy
             for label, prediction in zip(targets, predicted):
                 class_total[label.item()] += 1
                 if prediction.item() == label.item():
@@ -282,113 +514,196 @@ def train_loop(params, model, train_loader, criterion, optimizer, sched, device,
         if sched is not None:
             sched.step()
 
+        # Log progress
         avg_loss = running_loss / len(train_loader)
         accuracy = 100.0 * correct / total
 
         if not disable_inner:
-            # Report per-class accuracy
-            string = ""
-            class_ids = sorted(class_total.keys())
-            for cls in class_ids:
-                acc = 100.0 * class_correct[cls] / class_total[cls] if class_total[cls] > 0 else 0.0
-                string += f"    Class {cls}: Accuracy: {acc:.2f}% ({class_correct[cls]}/{class_total[cls]})"
-            tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.6f} - Accuracy: {accuracy:.2f}%  {string}")
-
-
+            class_acc_str = " ".join(
+                f"Class {cls}: {100.0 * class_correct[cls] / class_total[cls]:.2f}%"
+                for cls in sorted(class_total.keys())
+                if class_total[cls] > 0
+            )
+            tqdm.write(
+                f"Epoch [{epoch+1}/{epochs}] Loss: {avg_loss:.6f} Accuracy: {accuracy:.2f}% | {class_acc_str}"
+            )
 
     return model
 
 
-def download_kaggle_dataset(dataset_slug, root):
-    """
-    Downloads a Kaggle dataset using Kaggle API if not already present.
-    dataset_slug example: "mlg-ulb/creditcardfraud"
+
+
+# ============================================================================
+# Dataset Loading Utilities
+# ============================================================================
+
+
+def download_kaggle_dataset(dataset_slug: str, root: str) -> str:
+    """Download a Kaggle dataset using the Kaggle API.
+    
+    Args:
+        dataset_slug: Kaggle dataset identifier (e.g., "mlg-ulb/creditcardfraud").
+        root: Root directory for caching downloaded datasets.
+        
+    Returns:
+        Path to the downloaded dataset directory.
     """
     os.environ["KAGGLEHUB_CACHE"] = root
     dataset_dir = kagglehub.dataset_download(dataset_slug)
     return dataset_dir
 
-def preprocess_tabular(df, target_col, bin=True):
+
+def preprocess_tabular(
+    df: pd.DataFrame,
+    target_col: str,
+    bin: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Preprocess a tabular dataset for machine learning.
+    
+    Handles:
+    - Feature encoding (categorical to numerical)
+    - Feature scaling (MinMaxScaler)
+    - Target encoding
+    - Missing value imputation
+    
+    Args:
+        df: Input DataFrame with features and target.
+        target_col: Name of the target column.
+        bin: If True, use one-hot encoding for categorical features.
+             If False, use label encoding with scaling.
+    
+    Returns:
+        Tuple of (X_processed, y_encoded) where X is (n_samples, n_features)
+        and y is (n_samples,) with classes starting from 0.
+    """
+    # Shuffle dataset
     rng = np.random.default_rng(42)
     shuffled_indices = rng.permutation(df.index)
     df = df.iloc[shuffled_indices].reset_index(drop=True)
+    
     y = df[target_col].values
     X = df.drop(columns=[target_col])
 
+    # Process features
     X_processed = []
     for col in X.columns:
         if X[col].dtype == "object" or X[col].dtype.name == "category":
             if bin:
+                # One-hot encoding
                 lb = LabelBinarizer()
                 transformed = lb.fit_transform(X[col])
-                if transformed.shape[1] == 1:  # binary
+                if transformed.shape[1] == 1:  # Binary outcome
                     X_processed.append(transformed.ravel())
-                else:  # multi-class
+                else:  # Multi-class
                     X_processed.append(transformed)
             else:
+                # Label encoding + scaling
                 le = LabelEncoder()
                 scaler = MinMaxScaler()
                 transformed = le.fit_transform(X[col]).reshape(-1, 1)
-                transformed = scaler.fit_transform(transformed).reshape(-1, 1)
+                transformed = scaler.fit_transform(transformed).ravel()
                 X_processed.append(transformed)
         else:
+            # Numerical features: just scale
             scaler = MinMaxScaler()
-            transformed = scaler.fit_transform(X[[col]])
-            X_processed.append(transformed.ravel())
+            transformed = scaler.fit_transform(X[[col]]).ravel()
+            X_processed.append(transformed)
 
     X_final = np.column_stack(X_processed)
 
-    # Encode target if categorical
-    if isinstance(y[0], str): 
+    # Process target
+    if isinstance(y[0], str):
+        # Try numeric conversion, fall back to label encoding
         try:
-            y = [int(x) for x in y]
-        except Exception as _:
+            y = np.array([int(x) for x in y])
+        except (ValueError, TypeError):
             le = LabelEncoder()
             y = le.fit_transform(y)
-    if isinstance(y[0], bool):
-        y_lb = LabelBinarizer()
-        y = y_lb.fit_transform(y).ravel()
-    y = np.array(y) - min(np.array(y))  # Ensure targets start from 0
-    X_final[np.isnan(X_final)] = np.take(np.nanmean(X_final, axis=0), np.where(np.isnan(X_final))[1])
+    
+    if isinstance(y[0], bool) or (isinstance(y[0], np.bool_)):
+        lb = LabelBinarizer()
+        y = lb.fit_transform(y).ravel()
+    
+    # Ensure class labels start from 0
+    y = np.array(y, dtype=int) - int(np.min(y))
+    
+    # Impute missing values with column means
+    col_means = np.nanmean(X_final, axis=0)
+    nan_mask = np.isnan(X_final)
+    X_final[nan_mask] = col_means[np.where(nan_mask)[1]]
+    
     return X_final, y
 
 class PrefetchedLoader:
-    def __init__(self, loader, device):
+    """DataLoader wrapper that asynchronously prefetches batches to device.
+    
+    This wrapper moves batches to the target device in a non-blocking manner,
+    overlapping data transfer with computation.
+    """
+
+    def __init__(self, loader: torch.utils.data.DataLoader, device: torch.device):
+        """Initialize the prefetched loader.
+        
+        Args:
+            loader: Base DataLoader to wrap.
+            device: Target device for prefetching.
+        """
         self.loader = loader
         self.device = device
 
     def __iter__(self):
+        """Iterate over batches with prefetching.
+        
+        Yields:
+            Tuple of (x, y) moved to device asynchronously.
+        """
         for x, y in self.loader:
-            yield x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
+            yield (
+                x.to(self.device, non_blocking=True),
+                y.to(self.device, non_blocking=True),
+            )
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the number of batches."""
         return len(self.loader)
 
-    def __getattr__(self, name):
-        # forward any attribute not defined in PrefetchedLoader to self.loader
+    def __getattr__(self, name: str):
+        """Forward unknown attributes to the wrapped loader."""
         return getattr(self.loader, name)
 
 
-def load_dataset(name, root='./data', train=True, transform=None, download=True, num_max_samples=None):
-    """
-    Loads a standard dataset from torchvision (for vision) or torchtext/tabular (for tabular).
-
+def load_dataset(
+    name: str,
+    root: str = "./data",
+    train: bool = True,
+    transform: Optional[torch.nn.Module] = None,
+    download: bool = True,
+    num_max_samples: Optional[int] = None,
+) -> torch.utils.data.TensorDataset:
+    """Load a dataset by name, supporting vision, tabular, and medical datasets.
+    
+    Supports:
+    - Vision: MNIST variants, CIFAR-10, FashionMNIST, SVHN
+    - Tabular: BreastCancer, Adult, German Credit, ISOLET (sklearn/OpenML)
+    - Medical: MedMNIST datasets
+    - Kaggle: Cervical Cancer, Credit Risk
+    
     Args:
-        name (str): Name of the dataset ('MNIST', 'CIFAR10', 'FashionMNIST', 'SVHN', 'IMDB', etc.).
-        batch_size (int): Batch size for DataLoader.
-        root (str): Root directory for dataset.
-        train (bool): Whether to load the training set.
-        transform: Transformations to apply (for vision datasets).
-        download (bool): Whether to download the dataset if not present.
-
+        name: Dataset name (case-insensitive).
+        root: Root directory for caching datasets. Default: './data'.
+        train: If True, load training split; else test split.
+        transform: Optional transforms to apply (vision datasets only).
+        download: If True, download dataset if not cached.
+        num_max_samples: Maximum samples per class (if specified).
+    
     Returns:
-        DataLoader: PyTorch DataLoader for the dataset.
+        PyTorch TensorDataset with (X, y) pairs.
+        
+    Raises:
+        ValueError: If dataset name is not supported.
+        FileNotFoundError: If dataset requires manual download/setup.
     """
-
-    # Vision datasets
-        # ===================
-    # MedMNIST 2D datasets
-    # ===================
+    # Vision datasets - MedMNIST 2D datasets
     if name.lower() in INFO:  # check if dataset is in MedMNIST registry
         info = INFO[name.lower()]
         DataClass = getattr(medmnist, info['python_class'])
@@ -727,22 +1042,38 @@ def load_dataset(name, root='./data', train=True, transform=None, download=True,
     elif name.lower() == "unos":
         raise FileNotFoundError("UNOS dataset requires authorization; please provide manually.")
 
-    # Preproc
     else:
-        raise ValueError(f"Dataset {name} not supported.")
+        raise ValueError(f"Dataset '{name}' is not supported.")
+    
     if num_max_samples is not None:
         dataset, X_tensor, y_tensor = reduce_class_samples(X_tensor, y_tensor, num_max_samples)
 
-    # print(f"highest class {torch.max(y_tensor)} with dist {torch.unique(y_tensor, return_counts=True)}")
     return dataset
 
-import torch
-import torch.nn as nn
+
+# ============================================================================
+# Neural Network Models
+# ============================================================================
+
 
 class BasicBlock(nn.Module):
+    """Basic residual block for ResNet architectures.
+    
+    Implements a 3x3 convolution block with optional stride for downsampling.
+    Uses Group Normalization instead of Batch Normalization for compatibility
+    with Opacus privacy-preserving training.
+    """
+    
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1):
+    def __init__(self, in_planes: int, planes: int, stride: int = 1):
+        """Initialize basic residual block.
+        
+        Args:
+            in_planes: Number of input channels.
+            planes: Number of output channels.
+            stride: Stride for the first convolution. Default: 1.
+        """
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.gn1 = nn.GroupNorm(32, planes)
@@ -757,15 +1088,44 @@ class BasicBlock(nn.Module):
                 nn.GroupNorm(32, self.expansion * planes)
             )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the residual block.
+        
+        Args:
+            x: Input tensor of shape (batch, in_planes, height, width).
+            
+        Returns:
+            Output tensor of shape (batch, planes, height//stride, width//stride).
+        """
         out = self.relu(self.gn1(self.conv1(x)))
         out = self.gn2(self.conv2(out))
         out = out + self.shortcut(x)
         out = self.relu(out)
         return out
 
+
 class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10, num_input_channels=3):
+    """ResNet architecture with configurable depth.
+    
+    Adapted for privacy-preserving training with Group Normalization
+    instead of Batch Normalization.
+    """
+
+    def __init__(
+        self,
+        block: type,
+        num_blocks: List[int],
+        num_classes: int = 10,
+        num_input_channels: int = 3,
+    ):
+        """Initialize ResNet.
+        
+        Args:
+            block: Residual block class (e.g., BasicBlock).
+            num_blocks: Number of blocks in each layer [layer1, layer2, layer3, layer4].
+            num_classes: Number of output classes.
+            num_input_channels: Number of input channels.
+        """
         super(ResNet, self).__init__()
         self.in_planes = 64
         
@@ -781,7 +1141,24 @@ class ResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
-    def _make_layer(self, block, planes, num_blocks, stride):
+    def _make_layer(
+        self,
+        block: type,
+        planes: int,
+        num_blocks: int,
+        stride: int,
+    ) -> nn.Sequential:
+        """Create a layer of residual blocks.
+        
+        Args:
+            block: Residual block class.
+            planes: Number of output channels.
+            num_blocks: Number of blocks in this layer.
+            stride: Stride for the first block.
+            
+        Returns:
+            Sequential module containing the blocks.
+        """
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
@@ -789,7 +1166,15 @@ class ResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through ResNet.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, height, width).
+            
+        Returns:
+            Output logits of shape (batch, num_classes).
+        """
         out = self.relu(self.gn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
@@ -800,26 +1185,36 @@ class ResNet(nn.Module):
         out = self.fc(out)
         return out
 
-def load_model(dataset_name, model_name=None, num_classes=None):
-    """
-    Loads a basic neural network classifier for the specified dataset.
 
+def load_model(
+    dataset_name: str,
+    model_name: Optional[str] = None,
+    num_classes: Optional[int] = None,
+) -> nn.Module:
+    """Load a neural network model for a specified dataset.
+    
+    Automatically selects appropriate architecture based on dataset type
+    (MLP for tabular, CNN for vision, etc.).
+    
     Args:
-        dataset_name (str): Name of the dataset ('MNIST', 'CIFAR10', etc.).
-        model_name (str, optional): Name of the model architecture to load. If None, selects a default.
-        num_classes (int, optional): Number of output classes. If None, inferred from dataset.
-
+        dataset_name: Name of the dataset (must exist in DATASETS_INFO).
+        model_name: Model architecture name. If None, uses default for dataset.
+        num_classes: Number of output classes. If None, inferred from dataset.
+    
     Returns:
-        nn.Module: PyTorch model.
+        Instantiated PyTorch model.
+        
+    Raises:
+        ValueError: If dataset or model name is not supported.
     """
-
     dataset_name = dataset_name.lower()
-    # Infer number of classes if not provided
-    num_classes = datasets_info[dataset_name]["classes"]
-    if model_name is None: 
-        model_name = datasets_info[dataset_name]["model_type"] 
-    input_dim = datasets_info[dataset_name]["input_features"]
-    num_spatial = datasets_info[dataset_name].get("num_spatial", None)
+    
+    # Get dataset info
+    num_classes = DATASETS_INFO[dataset_name]["classes"]
+    if model_name is None:
+        model_name = DATASETS_INFO[dataset_name]["model_type"]
+    input_dim = DATASETS_INFO[dataset_name]["input_features"]
+    num_spatial = DATASETS_INFO[dataset_name].get("num_spatial", None)
 
     # Model definitions
     if model_name.lower() == 'mlp':
@@ -905,72 +1300,129 @@ def load_model(dataset_name, model_name=None, num_classes=None):
     elif model_name.lower() == 'resnet34':
         return ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes, num_input_channels=input_dim)
 
-
-    elif model_name.lower() == 'small_vgg' or model_name.lower() == 'vgg':
-
-        model = vgg11(num_classes=input_dim)
-        # Adjust input conv layer if needed
+    elif model_name.lower() in ['small_vgg', 'vgg']:
+        model = vgg11(num_classes=num_classes)
+        # Adjust input conv layer if input channels differ
         if input_dim != 3:
             model.features[0] = nn.Conv2d(input_dim, 64, kernel_size=3, padding=1)
+        return model
+    
     else:
-        raise ValueError(f"Model {model_name} not supported.")
+        raise ValueError(f"Model '{model_name}' is not supported.")
 
     return model
 
-def save_logits(args, model, train_dl, DEVICE, savedir, path):
-    """
-    Computes and saves logits for all data in the dataloader.
 
+# ============================================================================
+# Privacy and Model Management Utilities
+# ============================================================================
+
+
+def save_logits(
+    args: argparse.Namespace,
+    model: nn.Module,
+    train_dl: torch.utils.data.DataLoader,
+    DEVICE: torch.device,
+    savedir: str,
+    path: str,
+) -> None:
+    """Compute and save model logits for all training samples.
+    
+    Performs multiple forward passes (specified by args.n_queries) and saves
+    the logits for use in membership inference or other analyses.
+    
     Args:
-        model: PyTorch model.
-        dataloader: DataLoader providing the data.
-        device: Device to run the model on.
-        save_path: Path to save the logits (as a .pt file).
+        args: Configuration namespace with 'n_queries' attribute.
+        model: Trained model to get logits from.
+        train_dl: DataLoader providing training data.
+        DEVICE: Device to run inference on.
+        savedir: Base directory for saving.
+        path: Subdirectory path within savedir.
     """
     save_path = os.path.join(savedir, path, "logits.npy")
-    if not os.path.exists(save_path):
-        model.eval()
+    if os.path.exists(save_path):
+        return  # Already computed
 
-        logits_n = []
-        with torch.no_grad():
-            for i in range(args.n_queries):
-                logits = []
-                for x, _ in train_dl:
-                    x = x.to(DEVICE)
-                    outputs = model(x)
-                    logits.append(outputs.detach().cpu().numpy())
-                logits_n.append(np.concatenate(logits))
-        logits_n = np.stack(logits_n, axis=1)
+    model.eval()
+    logits_n = []
+    
+    with torch.no_grad():
+        for _ in range(args.n_queries):
+            logits = []
+            for x, _ in train_dl:
+                x = x.to(DEVICE)
+                outputs = model(x)
+                logits.append(outputs.detach().cpu().numpy())
+            logits_n.append(np.concatenate(logits))
+    
+    logits_n = np.stack(logits_n, axis=1)
+    np.save(save_path, logits_n)
+    
+    # Cleanup
+    del logits_n, logits, outputs, x
+    torch.cuda.empty_cache()
+    gc.collect()
 
-        np.save(save_path, logits_n)
-        # Explicit cleanup
-        del logits_n, logits, outputs, x
-        torch.cuda.empty_cache()
-        import gc
-        gc.collect()
 
-def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights_to_budgets=True, nm=None, sr=None, cw=None):
-    # modulevalidator = ModuleValidator()
-    # model = modulevalidator.fix_and_validate(model)
-
-    privacy_engine = PrivacyEngine(accountant=args.accountant,
-                                   individualize=args.individualize,
-                                   weights=args.weights,
-                                   pp_budgets=pp_budgets)
+def make_private(
+    model: nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    pp_budgets: np.ndarray,
+    args: argparse.Namespace,
+    adapt_weights_to_budgets: bool = True,
+    nm: Optional[np.ndarray] = None,
+    sr: Optional[np.ndarray] = None,
+    cw: Optional[np.ndarray] = None,
+) -> Tuple[nn.Module, torch.optim.Optimizer, torch.utils.data.DataLoader, Any]:
+    """Make a model differentially private using Opacus.
+    
+    Wraps a model with differential privacy guarantees, supporting:
+    - Automatic epsilon/delta-based privacy budgets
+    - Per-sample gradient clipping
+    - Variable noise multipliers or sampling rates per sample
+    
+    Args:
+        model: PyTorch model to privatize.
+        train_loader: Training data loader.
+        optimizer: Optimizer for training.
+        pp_budgets: Privacy budget (epsilon) per sample.
+        args: Configuration namespace with privacy parameters.
+        adapt_weights_to_budgets: If True, automatically determine noise/sampling.
+                                 If False, use provided nm/sr/cw values.
+        nm: Noise multipliers per budget (if adapt_weights_to_budgets=False).
+        sr: Sampling rates per budget (if adapt_weights_to_budgets=False).
+        cw: Clipping weights per budget (if adapt_weights_to_budgets=False).
+    
+    Returns:
+        Tuple of (private_model, private_optimizer, private_loader, privacy_engine).
+    """
+    privacy_engine = PrivacyEngine(
+        accountant=args.accountant,
+        individualize=args.individualize,
+        weights=args.weights,
+        pp_budgets=pp_budgets,
+    )
+    
     if adapt_weights_to_budgets:
-        private_model, private_optimizer, private_loader = privacy_engine \
-            .make_private_with_epsilon(module=model,
-                                       optimizer=optimizer,
-                                       data_loader=train_loader,
-                                       target_epsilon=min(pp_budgets),
-                                       target_delta=args.target_delta,
-                                       epochs=args.epochs,
-                                       max_grad_norm=args.max_grad_norm,
-                                       optimal=True,
-                                       max_alpha=10_000,
-                                       numeric=True,
-                                       precision = 0.00001)
+        # Automatically determine noise/sampling rates based on target epsilon
+        private_model, private_optimizer, private_loader = (
+            privacy_engine.make_private_with_epsilon(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                target_epsilon=float(np.min(pp_budgets)),
+                target_delta=args.target_delta,
+                epochs=args.epochs,
+                max_grad_norm=args.max_grad_norm,
+                optimal=True,
+                max_alpha=10_000,
+                numeric=True,
+                precision=0.00001,
+            )
+        )
     else:
+        # Use provided noise multipliers or sampling rates
         unique_budgets = np.unique(pp_budgets)
         budget_to_weight = {}
         for i, budget in enumerate(unique_budgets):
@@ -978,14 +1430,17 @@ def make_private(model, train_loader, optimizer, pp_budgets, args, adapt_weights
                 budget_to_weight[budget] = sr[i]
             else:
                 budget_to_weight[budget] = cw[i]
+        
         pp_weights = np.array([budget_to_weight[budget] for budget in pp_budgets])
-        private_model, private_optimizer, private_loader = privacy_engine \
-            .make_private(module=model,
-                          optimizer=optimizer,
-                          data_loader=train_loader,
-                          noise_multiplier=nm[0],
-                          max_grad_norm=args.max_grad_norm,
-                          pp_weights=pp_weights)
-    # print(np.unique(pp_budgets))
-    # print(privacy_engine.weights)
+        private_model, private_optimizer, private_loader = (
+            privacy_engine.make_private(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                noise_multiplier=nm[0],
+                max_grad_norm=args.max_grad_norm,
+                pp_weights=pp_weights,
+            )
+        )
+    
     return private_model, private_optimizer, private_loader, privacy_engine

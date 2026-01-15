@@ -1,7 +1,31 @@
-# Adaptation of PyTorch implementation of
-# https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/train.py
-#
-# author: Chenxiang Zhang (orientino)
+"""
+Post-hoc MIA Analysis and Statistical Evaluation.
+
+This module performs statistical analysis and visualization of membership
+inference attack results. It computes aggregate statistics, generates plots,
+and evaluates the significance of privacy degradation across different
+budget allocation strategies.
+
+Key Analyses:
+    - Per-instance MIA scores and confidence bounds
+    - Sample-wise Area Under Curve (AUC) computation
+    - Privacy integral visualization
+    - Statistical significance testing (t-tests, effect sizes)
+    - Per-group privacy vulnerability analysis
+
+Outputs:
+    - Aggregated statistics in JSON format
+    - Visualization plots (violin plots, AUC curves, integrals)
+    - Per-instance privacy scores and rankings
+
+This is adapted from the PyTorch implementation of:
+    https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/train.py
+
+Original Author: Chenxiang Zhang (orientino)
+
+Usage:
+    python 03_eval_mia_post.py --dataset cifar10 --budgets 8.0 16.0
+"""
 import sys
 sys.path.append("/vol/miltank/users/kaiserj/Clipping_vs_Sampling/")
 import argparse

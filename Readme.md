@@ -1,257 +1,220 @@
 # Your Privacy Depends on Others: Collusion Vulnerabilities in Individual Differential Privacy
 
-[![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](link-to-arxiv)
+[![arXiv](https://img.shields.io/badge/arXiv-2401.XXXXX-b31b1b.svg)](https://arxiv.org/abs/2401.XXXXX)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Paper](https://img.shields.io/badge/Paper-SaTML%202026-green.svg)](https://satml.org/)
 
-Official implementation of **"Your Privacy Depends on Others: Collusion Vulnerabilities in Individual Differential Privacy"** accepted at SaTML 2026.
+Official implementation of **"Your Privacy Depends on Others: Collusion Vulnerabilities in Individual Differential Privacy"** accepted at **IEEE SaTML 2026**.
 
-**Authors:** Johannes Kaiser, Alexander Ziller, Eleni Triantafillou, Daniel Rückert, Georgios Kaissis
+**Authors:** Johannes Kaiser<sup>1</sup>, Alexander Ziller<sup>1</sup>, Eleni Triantafillou<sup>1</sup>, Daniel Rückert<sup>1,2</sup>, Georgios Kaissis<sup>1,3</sup>
 
-## Abstract
+<sup>1</sup>Technical University of Munich (TUM) | <sup>2</sup>Helmholtz Center Munich | <sup>3</sup>Imperial College London
 
-Individual Differential Privacy (iDP) promises users control over their privacy through personalized privacy budgets. However, we reveal a critical vulnerability: **in sampling-based iDP mechanisms, your privacy risk depends not just on your own budget choice, but on everyone else's choices too.**
+---
 
-We demonstrate that:
-- 🔍 Privacy co-dependencies create exploitable attack vectors
-- ⚔️ Adversaries can manipulate budgets to increase targeted individuals' vulnerability
-- 📊 **62% of targeted individuals** were successfully attacked in our evaluation
-- 🛡️ We propose (εᵢ, δᵢ, Δ)-iDP to bound excess vulnerabilities
+> 🚀 **New to this codebase?** Start with [**GETTING_STARTED.md**](GETTING_STARTED.md) for a 30-minute guided tour!
 
-<p align="center">
-  <img src="figures/figure1.png" alt="Privacy profiles showing different mechanisms" width="700"/>
-  <br>
-  <em>Figure 1: Privacy profiles and adversarial advantage of mechanisms calibrated to (2, 0.08)-DP show vastly different protections despite identical (ε, δ) guarantees.</em>
-</p>
+---
 
-## Key Findings
+## Overview
 
-### The Core Problem
+Individual Differential Privacy (iDP) promises users control over their privacy through **personalized privacy budgets**. However, we reveal a critical vulnerability:
+
+> **In sampling-based iDP mechanisms, your privacy risk depends not just on your own budget choice, but on everyone else's choices too.**
+
+### The Core Vulnerability
 
 Sampling-based iDP mechanisms adjust per-sample sampling rates to meet individual privacy budgets. However:
 
 1. **Privacy Co-dependence**: To maintain fixed batch sizes, if some users choose strict budgets (low sampling rates), others must have higher sampling rates
 2. **Incomplete Specification**: Mechanisms are calibrated only to a single (ε, δ) point, leaving the full privacy profile unconstrained
-3. **Excess Vulnerability**: Different mechanisms with identical (ε, δ) can expose users to vastly different real-world risks
+3. **Exploitable Gaps**: Different mechanisms with identical (ε, δ) can expose users to vastly different real-world risks
 
 <p align="center">
-  <img src="figures/figure3.png" alt="Theoretical adversarial advantage" width="600"/>
+  <img src="figures/figure1.png" alt="Privacy profiles showing different mechanisms" width="750"/>
   <br>
-  <em>Figure 3: Theoretical adversarial advantage for data points with ε₁=8 depends heavily on the proportion and budget of other groups.</em>
+  <em><strong>Figure 1:</strong> Privacy profiles and adversarial advantage of mechanisms calibrated to (2, 0.08)-DP show vastly different protections despite identical (ε, δ) guarantees.</em>
 </p>
 
-### Novel Attacks
+### Key Findings
 
-We introduce two attacks that exploit this vulnerability **while operating entirely within DP's formal guarantees**:
+We demonstrate that:
+- 🔍 **Privacy co-dependencies** create exploitable attack vectors between users
+- ⚔️ **Adversaries can manipulate budgets** to increase targeted individuals' vulnerability
+- 📊 **62% success rate** in targeted attacks across diverse datasets
+- 🛡️ **Proposed mitigation** (εᵢ, δᵢ, Δ)-iDP bounds excess vulnerabilities
 
-#### 1. Budget Manipulation Attack
+## Attacks & Vulnerabilities
+
+### 1. Budget Manipulation Attack
+
 A central adversary (e.g., model trainer) strategically assigns privacy budgets within contractual limits to maximize a target's vulnerability.
 
-<p align="center">
-  <img src="figures/figure4.png" alt="Budget Manipulation Attack" width="500"/>
-</p>
-
-#### 2. Collusion Attack
-Multiple data contributors coordinate their privacy budget choices to increase a victim's risk—no central authority needed.
+**Attack Model:**
+- Adversary controls budget distribution across users
+- Operates entirely within DP's formal guarantees
+- Exploits privacy co-dependencies to increase sampling rates for targets
 
 <p align="center">
-  <img src="figures/figure5.png" alt="Collusion Attack" width="500"/>
-</p>
-
-### Empirical Results
-
-<p align="center">
-  <img src="figures/figure6.png" alt="Attack results" width="600"/>
+  <img src="figures/figure4.png" alt="Budget Manipulation Attack" width="600"/>
   <br>
-  <em>Figure 6: Privacy score increases for targeted individuals in budget manipulation attacks. Each line represents one attacked sample, with 62% showing significantly increased vulnerability.</em>
+  <em><strong>Figure 4:</strong> Budget manipulation attack framework showing how adversarial budget assignment increases target vulnerability.</em>
 </p>
 
-**Table I** shows statistically significant increases in privacy scores (membership inference susceptibility) across multiple datasets when privacy budget distributions are manipulated:
+### 2. Collusion Attack
 
-| Dataset | ε₁ | ε₂ | Significance (Group 1) | Significance (Group 2) |
-|---------|----|----|----------------------|----------------------|
+Multiple data contributors coordinate their privacy budget choices to increase a victim's risk—**no central authority needed**.
+
+**Attack Model:**
+- Distributed participants coordinate budget choices
+- Colluders choose low budgets (low sampling rates)
+- Forces targets to higher sampling rates, increasing vulnerability
+
+<p align="center">
+  <img src="figures/figure5.png" alt="Collusion Attack" width="600"/>
+  <br>
+  <em><strong>Figure 5:</strong> Collusion attack showing how coordinated budget choices exploit system-level dependencies.</em>
+</p>
+
+## Empirical Results
+
+### Attack Success Rates
+
+<p align="center">
+  <img src="figures/figure6.png" alt="Attack results" width="700"/>
+  <br>
+  <em><strong>Figure 6:</strong> Privacy score increases for targeted individuals in budget manipulation attacks. <strong>62% of targeted samples</strong> show significantly increased vulnerability.</em>
+</p>
+
+### Results Table
+
+Statistically significant increases in privacy vulnerability across datasets when budget distributions are manipulated:
+
+| Dataset | ε₁ | ε₂ | Group 1 Impact | Group 2 Impact |
+|---------|----|----|----------------|----------------|
 | Credit Card Default | 4 | 20 | ★★★ (ES: 20.2) | ★★★ (ES: 17.5) |
-| MNIST [4,1000] | 16 | 50 | ★★★ (ES: 21.2) | ★★★ (ES: 17.7) |
+| MNIST [4, 1000] | 16 | 50 | ★★★ (ES: 21.2) | ★★★ (ES: 17.7) |
 | CIFAR-10 | 16 | 50 | ★★★ (ES: 13.9) | ★★★ (ES: 53.5) |
 | HAM10k [2000] | 8 | 32 | ★★★ (ES: 31.9) | ★★★ (ES: 37.2) |
 
-★★★ indicates p ≤ 0.001; ES = Effect Size
+<sup>★★★ indicates p ≤ 0.001; ES = Effect Size (Cohen's d)</sup>
 
-## Installation
+## Installation & Setup
+
+### Prerequisites
+- Python 3.9+
+- CUDA 11.8+ (optional, for GPU acceleration)
+- ~20GB disk space for datasets
+
+### Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/idp-collusion-vulnerabilities.git
-cd idp-collusion-vulnerabilities
+# 1. Clone the repository
+git clone https://github.com/Johannes-Kaiser/Clipping_vs_Sampling.git
+cd Clipping_vs_Sampling
 
-# Create conda environment
+# 2. Create and activate conda environment
 conda create -n idp-vuln python=3.9
 conda activate idp-vuln
 
-# Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 ```
+
+### Dependencies
+
+Key packages:
+- **PyTorch** (≥2.0) - Model training and inference
+- **Opacus** (custom fork) - Differential privacy mechanisms making use of fast DP computations and allowing for iDP
+- **DP** (custom fork) - Fast DP computations
+
 
 ## Repository Structure
 
 ```
-.
-├── src/
-│   ├── mechanisms/          # iDP mechanism implementations
-│   │   ├── sampling_based.py
-│   │   └── sensitivity_based.py
-│   ├── attacks/             # Attack implementations
-│   │   ├── budget_manipulation.py
-│   │   └── collusion.py
-│   ├── auditing/            # LiRA and MIA implementations
-│   │   └── lira.py
-│   └── utils/               # Helper functions
-├── experiments/             # Experiment scripts
-│   ├── excess_vulnerability.py
-│   ├── budget_manipulation_attack.py
-│   └── collusion_attack.py
-├── configs/                 # Configuration files
-├── data/                    # Dataset directory
-├── figures/                 # Generated figures
-└── requirements.txt
+Clipping_vs_sampling/
+├── scripts_experiments/                       # Experimental code
+│   ├── README.md                              # Detailed guide to experiments
+│   ├── mia/
+│   │   ├── 01_budget_control_adv.py          # Budget manipulation attack (main)
+│   │   ├── 02_eval_mia_across_runs_clean.py  # Multi-seed evaluation
+│   │   ├── 03_eval_mia_post.py               # Statistical analysis
+│   │   ├── 04_mia.py                         # Core MIA (LiRA)
+│   │   ├── exp_yaml/                         # Dataset configurations
+│   │   │   ├── credit_card_default.yaml      # Tabular: Credit card
+│   │   │   ├── adult.yaml, german_credit.yaml # Other tabular
+│   │   │   ├── mnist.yaml, cifar10.yaml      # Vision datasets
+│   │   │   └── *mnist*.yaml                  # Medical datasets
+│   │   ├── utils/
+│   │   │   ├── utils_general.py              # Dataset loading, models
+│   │   │   └── utils_mia.py                  # LiRA attack
+│   │   └── *.ipynb                           # Evaluation notebooks
+│   └── ...
+├── scripts/                                   # Analysis & visualization
+│   ├── README.md                              # Notebook guide
+│   ├── plot_bound.ipynb                       # Theoretical bounds
+│   ├── clipping_vs_sampling.ipynb             # Mechanism comparison
+│   ├── 3D_plot_budg_portion_adv.ipynb         # 3D visualizations
+│   ├── generate_example_figs.ipynb            # Publication figures
+│   └── *.ipynb                                # Other analyses
+├── opacus_new/                                # Modified Opacus library
+│   ├── privacy_engine.py                      # iDP with per-sample budgets
+│   ├── accountants/                           # Privacy accounting
+│   └── ...
 ```
 
-## Running Experiments
 
-### 1. Demonstrating Excess Vulnerability
+## Quick Start: Running Experiments
 
-Reproduce the results from Table I showing how privacy budget distributions affect individual vulnerability:
+### Experiment 1: Budget Manipulation Attack (Main Results)
+
+Reproduce the main attack from Table I:
 
 ```bash
-python experiments/excess_vulnerability.py \
+
+# Test on Credit Card Default dataset
+cd scripts_experiments/mia
+python ./scripts_experiments/mia/budget_control_adv.py \
+        --exp_yaml ./scripts_experiments/mia/exp_yaml_adv/adult.yaml \
+        --idx_start 1 --idx_end 100 &
+```
+
+### Experiment 2: Evaluate Attacks Across Multiple Runs
+
+```bash
+# Evaluate MIA effectiveness across different seeds
+python 02_eval_mia_across_runs_clean.py \
+    --savedir ./budget_adv_final_by_dataset \
     --dataset credit_card_default \
-    --epsilon1 4 \
-    --epsilon2 20 \
-    --delta 1e-12 \
-    --proportions 0.2,0.4,0.6,0.8 \
-    --num_seeds 5 \
-    --num_shadows 512
+    --seeds 0 1 2 3 4
+
+# Generate statistics and plots
+python 03_eval_mia_post.py \
+    --results_dir ./budget_adv_final_by_dataset
 ```
 
-**Options:**
-- `--dataset`: Choose from `credit_card_default`, `german_credit`, `mnist`, `cifar10`, `organc_mnist`, `organs_mnist`, `pneumonia`, `ham10k`
-- `--epsilon1`, `--epsilon2`: Privacy budgets for the two groups
-- `--delta`: Delta parameter (default: 1e-12)
-- `--proportions`: Comma-separated proportions for group 1
-- `--num_shadows`: Number of shadow models for LiRA (default: 512)
 
-### 2. Budget Manipulation Attack
 
-Evaluate the budget manipulation attack on targeted individuals:
+## Proposed Solution: (εᵢ, δᵢ, Δ)-iDP
 
-```bash
-python experiments/budget_manipulation_attack.py \
-    --dataset credit_card_default \
-    --target_epsilon 32 \
-    --adversary_epsilons 4,8,16,32 \
-    --delta 1e-12 \
-    --num_targets 1000 \
-    --num_shadows 64
-```
+We propose extending the iDP contract to include a **Δ-divergence bound** that limits excess vulnerability:
 
-**Options:**
-- `--target_epsilon`: Privacy budget assigned to target individuals
-- `--adversary_epsilons`: Comma-separated list of budgets the adversary can choose
-- `--num_targets`: Number of random samples to target
-- `--num_shadows`: Number of shadow models per target (default: 64)
+### Concept
 
-### 3. Collusion Attack
+Standard iDP only guarantees individual (ε, δ) at a single point. We propose adding a constraint Δ that bounds how much an individual's privacy can degrade due to others' budget choices.
 
-Simulate collusion attacks with varying proportions of colluding parties:
+### Key Properties
 
-```bash
-python experiments/collusion_attack.py \
-    --dataset mnist \
-    --target_epsilon 32 \
-    --collusion_epsilon 4 \
-    --collusion_proportions 0.2,0.4,0.6,0.8 \
-    --delta 1e-12 \
-    --num_targets 100
-```
+- **Individually controlled**: Each user specifies their (εᵢ, δᵢ, Δᵢ) contract
+- **System-level guarantee**: Mechanism rejects parameter choices violating Δ bounds
+- **Backward compatible**: Reduces to standard iDP when Δ → 0
 
-**Options:**
-- `--collusion_epsilon`: Budget chosen by colluding parties
-- `--collusion_proportions`: Proportions of dataset controlled by colluders
-
-### 4. Sensitivity-Based iDP Ablation
-
-Compare sampling-based vs sensitivity-based iDP (Table II):
-
-```bash
-python experiments/sensitivity_based_ablation.py \
-    --dataset mnist \
-    --epsilon1 16 \
-    --epsilon2 50 \
-    --delta 1e-12 \
-    --num_shadows 512
-```
-
-## Proposed Mitigation: (εᵢ, δᵢ, Δ)-iDP
-
-We propose extending the iDP contract to include a Δ-divergence bound:
-
-```python
-from src.mechanisms.delta_idp import DeltaIDP
-
-# Create mechanism with excess vulnerability bounds
-mechanism = DeltaIDP(
-    epsilon_i=[4, 8, 16, 32],  # Individual budgets
-    delta=1e-12,
-    max_delta_divergence=0.05  # Maximum excess vulnerability
-)
-
-# Mechanism will reject parameter choices that exceed Δ bound
-params = mechanism.calibrate(dataset)
-```
+### Visual Comparison
 
 <p align="center">
-  <img src="figures/figure7.png" alt="Delta-iDP allowable region" width="500"/>
+  <img src="figures/figure7.png" alt="Delta-iDP allowable region" width="700"/>
   <br>
-  <em>Figure 7: Valid region for (8, 10⁻⁵, 0.05)-DP bounded by Δ-approximately Blackwell-dominant mechanisms.</em>
+  <em><strong>Figure 7:</strong> Valid parameter region for (8, 10⁻⁵, 0.05)-DP showing how Δ-bounds restrict excess vulnerability.</em>
 </p>
 
-## Citation
-
-If you find this work useful, please cite:
-
-```bibtex
-@inproceedings{kaiser2026privacy,
-  title={Your Privacy Depends on Others: Collusion Vulnerabilities in Individual Differential Privacy},
-  author={Kaiser, Johannes and Ziller, Alexander and Triantafillou, Eleni and Rückert, Daniel and Kaissis, Georgios},
-  booktitle={IEEE Conference on Secure and Trustworthy Machine Learning (SaTML)},
-  year={2026}
-}
-```
-
-## Key Takeaways
-
-⚠️ **For Practitioners:**
-- iDP systems require auditing beyond single (ε, δ) points
-- Privacy budget distributions must be monitored and controlled
-- Consider (εᵢ, δᵢ, Δ)-iDP contracts to bound excess risk
-
-⚠️ **For Data Contributors:**
-- Your privacy risk in sampling-based iDP depends on others' choices
-- Demand transparency about privacy budget distributions
-- Request Δ-divergence bounds in privacy contracts
-
-⚠️ **For Researchers:**
-- Single-point (ε, δ) calibration is insufficient
-- Full privacy profiles must be considered
-- Federated learning scenarios are particularly vulnerable to collusion
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contact
-
-For questions or issues, please open a GitHub issue or contact:
-- Johannes Kaiser: johannes.kaiser@tum.de
-
-## Acknowledgments
-
-This work was supported by the European Union under Grant Agreement 101100633 (EUCAIM) and the German Ministry of Education and Research through the Medical Informatics Initiative (PrivateAIM Project, grant no. 01ZZ2316C).
