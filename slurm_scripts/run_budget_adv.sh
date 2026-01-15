@@ -7,14 +7,11 @@
 #SBATCH --gres=gpu:1               # Number of GPUs if needed
 #SBATCH --cpus-per-task=36         # Number of CPUs (Don't use more than 24 per GPU)
 #SBATCH --mem=80G                  # Memory in GB (Don't use more than 48GB per GPU unless you absolutely need it and know what you are doing)
-#SBATCH --partition=universe
-# #SBATCH --partition=eagle
-# #SBATCH --account=eagle
 
 export PYTHONUNBUFFERED=true
 
 # load python module
-source /vol/miltank/users/kaiserj/Indivdiual_Privacy_DPSGD_Evaluation/.venv/bin/activate
+source ./.venv/bin/activate
 
 # Split the range between idx_start and idx_end into 10 chunks and run in parallel
 total_start=$1

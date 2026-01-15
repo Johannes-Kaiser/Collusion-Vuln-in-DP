@@ -7,20 +7,17 @@
 #SBATCH --gres=gpu:1               # Number of GPUs if needed
 #SBATCH --cpus-per-task=24         # Number of CPUs (Don't use more than 24 per GPU)
 #SBATCH --mem=80G                  # Memory in GB (Don't use more than 48GB per GPU unless you absolutely need it and know what you are doing)
-#SBATCH --partition=universe
-#SBATCH --partition=eagle
-#SBATCH --account=eagle
 
 export PYTHONUNBUFFERED=true
 
 # load python module
-source /vol/miltank/users/kaiserj/Indivdiual_Privacy_DPSGD_Evaluation/.venv/bin/activate
+source ./.venv/bin/activate
 
 MAX_PARALLEL=$3
 pids=()
 
 for seed in {1..5}; do
-    /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
+    ./.venv/bin/python \
         scripts_experiments/mia/mia.py \
         --seed $seed --exp_yaml $1 --individualize $2 --name_ext $4 &
 

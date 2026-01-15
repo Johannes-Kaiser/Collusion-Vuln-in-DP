@@ -1,0 +1,19 @@
+#!/bin/bash
+
+
+nohup sbatch --error="./out_adv/mia-adult-%A.err" --output="./out_adv/mia-adult-%A.out" --job-name="mia_adv-adult" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/adult.yaml > nohup_adv_adult.out
+nohup sbatch --error="./out_adv/mia-credit_card_default-%A.err" --output="./out_adv/mia-credit_card_default-%A.out" --job-name="mia_adv-credit_card_default" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/credit_card_default.yaml > nohup_adv_credit_card_default.out
+nohup sbatch --error="./out_adv/mia-german_credit-%A.err" --output="./out_adv/mia-german_credit-%A.out" --job-name="mia_adv-german_credit" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/german_credit.yaml > nohup_adv_german_credit.out
+nohup sbatch --error="./out_adv/mia-mnist_4-%A.err" --output="./out_adv/mia-mnist_4-%A.out" --job-name="mia_adv-mnist_4" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/mnist_4.yaml > nohup_adv_mnist_4.out
+nohup sbatch --error="./out_adv/mia-kaggle_cervical-%A.err" --output="./out_adv/mia-kaggle_cervical-%A.out" --job-name="mia_adv-kaggle_cervical" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/kaggle_cervical.yaml > nohup_adv_kaggle_cervical.out
+nohup sbatch --error="./out_adv/mia-kaggle_credit-%A.err" --output="./out_adv/mia-kaggle_credit-%A.out" --job-name="mia_adv-kaggle_credit" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/kaggle_credit.yaml > nohup_adv_kaggle_credit.out
+nohup sbatch --error="./out_adv/mia-uci_isolet-%A.err" --output="./out_adv/mia-uci_isolet-%A.out" --job-name="mia_adv-uci_isolet" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/uci_isolet.yaml > nohup_adv_uci_isolet.out
+nohup sbatch --error="./out_adv/mia-breast_cancer-%A.err" --output="./out_adv/mia-breast_cancer-%A.out" --job-name="mia_adv-breast_cancer" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/breast_cancer.yaml > nohup_adv_breast_cancer.out
+nohup sbatch --error="./out_adv/mia-breastmnist-%A.err" --output="./out_adv/mia-breastmnist-%A.out" --job-name="mia_adv-breastmnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/breastmnist.yaml > nohup_adv_breastmnist.out
+nohup sbatch --error="./out_adv/mia-pneumoniamnist-%A.err" --output="./out_adv/mia-pneumoniamnist-%A.out" --job-name="mia_adv-pneumoniamnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/pneumoniamnist.yaml > nohup_adv_pneumoniamnist.out
+nohup sbatch --error="./out_adv/mia-dermamnist-%A.err" --output="./out_adv/mia-dermamnist-%A.out" --job-name="mia_adv-dermamnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/dermamnist.yaml > nohup_adv_dermamnist.out
+nohup sbatch --error="./out_adv/mia-mnist-%A.err" --output="./out_adv/mia-mnist-%A.out" --job-name="mia_adv-mnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/mnist.yaml > nohup_adv_mnist.out
+nohup sbatch --error="./out_adv/mia-organcmnist-%A.err" --output="./out_adv/mia-organcmnist-%A.out" --job-name="mia_adv-organcmnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/organcmnist.yaml > nohup_adv_organcmnist.out
+nohup sbatch --error="./out_adv/mia-organsmnist-%A.err" --output="./out_adv/mia-organsmnist-%A.out" --job-name="mia_adv-organsmnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/organsmnist.yaml > nohup_adv_organsmnist.out
+nohup sbatch --error="./out_adv/mia-bloodmnist-%A.err" --output="./out_adv/mia-bloodmnist-%A.out" --job-name="mia_adv-bloodmnist" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/bloodmnist.yaml > nohup_adv_bloodmnist.out
+nohup sbatch --error="./out_adv/mia-cifar10-%A.err" --output="./out_adv/mia-cifar10-%A.out" --job-name="mia_adv-cifar10" run_budget_adv.sh 0 400 16 ./scripts_experiments/mia/exp_yaml_adv/cifar10.yaml > nohup_adv_cifar10.out
