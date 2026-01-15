@@ -11,11 +11,6 @@ Official implementation of **"Your Privacy Depends on Others: Collusion Vulnerab
 
 <sup>1</sup>Technical University of Munich (TUM) | <sup>2</sup>Helmholtz Center Munich | <sup>3</sup>Imperial College London
 
----
-
-> 🚀 **New to this codebase?** Start with [**GETTING_STARTED.md**](GETTING_STARTED.md) for a 30-minute guided tour!
-
----
 
 ## Overview
 
@@ -27,7 +22,7 @@ Individual Differential Privacy (iDP) promises users control over their privacy 
 
 Sampling-based iDP mechanisms adjust per-sample sampling rates to meet individual privacy budgets. However:
 
-1. **Privacy Co-dependence**: To maintain fixed batch sizes, if some users choose strict budgets (low sampling rates), others must have higher sampling rates
+1. **Privacy Interdependence**: To maintain fixed batch sizes, if some users choose strict budgets (low sampling rates), others must have higher sampling rates
 2. **Incomplete Specification**: Mechanisms are calibrated only to a single (ε, δ) point, leaving the full privacy profile unconstrained
 3. **Exploitable Gaps**: Different mechanisms with identical (ε, δ) can expose users to vastly different real-world risks
 
@@ -40,7 +35,7 @@ Sampling-based iDP mechanisms adjust per-sample sampling rates to meet individua
 ### Key Findings
 
 We demonstrate that:
-- 🔍 **Privacy co-dependencies** create exploitable attack vectors between users
+- 🔍 **Privacy interdependencies** create exploitable attack vectors between users
 - ⚔️ **Adversaries can manipulate budgets** to increase targeted individuals' vulnerability
 - 📊 **62% success rate** in targeted attacks across diverse datasets
 - 🛡️ **Proposed mitigation** (εᵢ, δᵢ, Δ)-iDP bounds excess vulnerabilities
