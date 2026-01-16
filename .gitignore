@@ -22,6 +22,5 @@ __pycache__/
 *.pt
 *.json
 *.png
-*.svg
 *.pkl
 *.csv
