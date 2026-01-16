@@ -27,13 +27,13 @@ Sampling-based iDP mechanisms adjust per-sample sampling rates to meet individua
 3. **Exploitable Gaps**: Different mechanisms with identical (ε, δ) can expose users to vastly different real-world risks
 
 <p align="center">
-  <img src="figures/teaser.svg" alt="Privacy profiles showing different mechanisms" width="750"/>
+  <img src="figures/teaser.svg" alt="Privacy profiles showing different mechanisms" width="300"/>
   <br>
   <em><strong>Figure 1:</strong> Privacy profiles and adversarial advantage of mechanisms calibrated to (2, 0.08)-DP show vastly different protections despite identical (ε, δ) guarantees.</em>
 </p>
 
 <p align="center">
-  <img src="figures/3d_plot_adv4.svg" alt="Privacy profiles showing different mechanisms" width="750"/>
+  <img src="figures/3d_plot_adv4.svg" alt="Privacy profiles showing different mechanisms" width="200"/>
   <br>
   <em><strong>Figure 2:</strong> Vulnerability of one group of datapoints in the presence of another group across different proportions and privacy budgets.</em>
 </p>
@@ -58,7 +58,7 @@ A central adversary (e.g., model trainer) strategically assigns privacy budgets 
 - Exploits privacy co-dependencies to increase sampling rates for targets
 
 <p align="center">
-  <img src="figures/attack1_2.svg" alt="Budget Manipulation Attack" width="600"/>
+  <img src="figures/attack1_2.svg" alt="Budget Manipulation Attack" width="300"/>
   <br>
   <em><strong>Figure 3:</strong> Budget manipulation attack framework showing how adversarial budget assignment increases target vulnerability.</em>
 </p>
@@ -73,7 +73,7 @@ Multiple data contributors coordinate their privacy budget choices to increase a
 - Forces targets to higher sampling rates, increasing vulnerability
 
 <p align="center">
-  <img src="figures/attack2_2.svg" alt="Collusion Attack" width="600"/>
+  <img src="figures/attack2_2.svg" alt="Collusion Attack" width="200"/>
   <br>
   <em><strong>Figure 4:</strong> Collusion attack showing how coordinated budget choices exploit system-level dependencies.</em>
 </p>
@@ -83,7 +83,7 @@ Multiple data contributors coordinate their privacy budget choices to increase a
 ### Attack Success Rates
 
 <p align="center">
-  <img src="figures/priv_credit_card_default.svg" alt="Attack results" width="700"/>
+  <img src="figures/priv_credit_card_default.svg" alt="Attack results" width="300"/>
   <br>
   <em><strong>Figure 5:</strong> Privacy score increases for targeted individuals in budget manipulation attacks. <strong>62% of targeted samples</strong> show significantly increased vulnerability.</em>
 </p>
@@ -204,7 +204,7 @@ Standard iDP only guarantees individual (ε, δ) at a single point. We propose a
 ### Visual Comparison
 
 <p align="center">
-  <img src="figures/Delta_bound_corrected.svg" alt="Delta-iDP allowable region" width="700"/>
+  <img src="figures/Delta_bound_corrected.svg" alt="Delta-iDP allowable region" width="200"/>
   <br>
   <em><strong>Figure 6:</strong> Valid parameter region for (8, 10⁻⁵, 0.05)-DP showing how Δ-bounds restrict excess vulnerability.</em>
 </p>
