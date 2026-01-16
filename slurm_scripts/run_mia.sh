@@ -18,7 +18,7 @@ pids=()
 
 for seed in {1..5}; do
     ./.venv/bin/python \
-        scripts_experiments/mia/mia.py \
+        experiment_scripts/mia/mia.py \
         --seed $seed --exp_yaml $1 --individualize $2 --name_ext $4 &
 
     pids+=($!)

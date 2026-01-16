@@ -33,7 +33,7 @@ for i in $(seq 0 $((num_jobs - 1))); do
 
     echo "Running indices $start to $end"
     /vol/miltank/users/kaiserj/Clipping_vs_Sampling/.venv/bin/python \
-        scripts_experiments/mia/budget_control_adv.py \
+        experiment_scripts/mia/budget_control_adv.py \
         --exp_yaml "$exp_yaml" \
         --idx_start "$start" --idx_end "$end" &
 done
