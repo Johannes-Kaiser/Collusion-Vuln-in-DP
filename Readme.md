@@ -27,9 +27,15 @@ Sampling-based iDP mechanisms adjust per-sample sampling rates to meet individua
 3. **Exploitable Gaps**: Different mechanisms with identical (ε, δ) can expose users to vastly different real-world risks
 
 <p align="center">
-  <img src="figures/figure1.png" alt="Privacy profiles showing different mechanisms" width="750"/>
+  <img src="figures/teaser.svg" alt="Privacy profiles showing different mechanisms" width="750"/>
   <br>
   <em><strong>Figure 1:</strong> Privacy profiles and adversarial advantage of mechanisms calibrated to (2, 0.08)-DP show vastly different protections despite identical (ε, δ) guarantees.</em>
+</p>
+
+<p align="center">
+  <img src="figures/3d_plot_adv4.svg" alt="Privacy profiles showing different mechanisms" width="750"/>
+  <br>
+  <em><strong>Figure 2:</strong> Vulnerability of one group of datapoints in the presence of another group across different proportions and privacy budgets.</em>
 </p>
 
 ### Key Findings
@@ -52,9 +58,9 @@ A central adversary (e.g., model trainer) strategically assigns privacy budgets 
 - Exploits privacy co-dependencies to increase sampling rates for targets
 
 <p align="center">
-  <img src="figures/figure4.png" alt="Budget Manipulation Attack" width="600"/>
+  <img src="figures/attack1_2.svg" alt="Budget Manipulation Attack" width="600"/>
   <br>
-  <em><strong>Figure 4:</strong> Budget manipulation attack framework showing how adversarial budget assignment increases target vulnerability.</em>
+  <em><strong>Figure 3:</strong> Budget manipulation attack framework showing how adversarial budget assignment increases target vulnerability.</em>
 </p>
 
 ### 2. Collusion Attack
@@ -67,9 +73,9 @@ Multiple data contributors coordinate their privacy budget choices to increase a
 - Forces targets to higher sampling rates, increasing vulnerability
 
 <p align="center">
-  <img src="figures/figure5.png" alt="Collusion Attack" width="600"/>
+  <img src="figures/attack2_2.svg" alt="Collusion Attack" width="600"/>
   <br>
-  <em><strong>Figure 5:</strong> Collusion attack showing how coordinated budget choices exploit system-level dependencies.</em>
+  <em><strong>Figure 4:</strong> Collusion attack showing how coordinated budget choices exploit system-level dependencies.</em>
 </p>
 
 ## Empirical Results
@@ -77,23 +83,10 @@ Multiple data contributors coordinate their privacy budget choices to increase a
 ### Attack Success Rates
 
 <p align="center">
-  <img src="figures/figure6.png" alt="Attack results" width="700"/>
+  <img src="figures/priv_credit_card_default.svg" alt="Attack results" width="700"/>
   <br>
-  <em><strong>Figure 6:</strong> Privacy score increases for targeted individuals in budget manipulation attacks. <strong>62% of targeted samples</strong> show significantly increased vulnerability.</em>
+  <em><strong>Figure 5:</strong> Privacy score increases for targeted individuals in budget manipulation attacks. <strong>62% of targeted samples</strong> show significantly increased vulnerability.</em>
 </p>
-
-### Results Table
-
-Statistically significant increases in privacy vulnerability across datasets when budget distributions are manipulated:
-
-| Dataset | ε₁ | ε₂ | Group 1 Impact | Group 2 Impact |
-|---------|----|----|----------------|----------------|
-| Credit Card Default | 4 | 20 | ★★★ (ES: 20.2) | ★★★ (ES: 17.5) |
-| MNIST [4, 1000] | 16 | 50 | ★★★ (ES: 21.2) | ★★★ (ES: 17.7) |
-| CIFAR-10 | 16 | 50 | ★★★ (ES: 13.9) | ★★★ (ES: 53.5) |
-| HAM10k [2000] | 8 | 32 | ★★★ (ES: 31.9) | ★★★ (ES: 37.2) |
-
-<sup>★★★ indicates p ≤ 0.001; ES = Effect Size (Cohen's d)</sup>
 
 ## Installation & Setup
 
@@ -129,7 +122,7 @@ Key packages:
 
 ```
 Clipping_vs_sampling/
-├── scripts_experiments/                       # Experimental code
+├── experiment_scripts/                       # Experimental code
 │   ├── README.md                              # Detailed guide to experiments
 │   ├── mia/
 │   │   ├── 01_budget_control_adv.py          # Budget manipulation attack (main)
@@ -146,13 +139,16 @@ Clipping_vs_sampling/
 │   │   │   └── utils_mia.py                  # LiRA attack
 │   │   └── *.ipynb                           # Evaluation notebooks
 │   └── ...
-├── scripts/                                   # Analysis & visualization
+├── notebook_scripts/                                   # Analysis & visualization
 │   ├── README.md                              # Notebook guide
 │   ├── plot_bound.ipynb                       # Theoretical bounds
-│   ├── clipping_vs_sampling.ipynb             # Mechanism comparison
-│   ├── 3D_plot_budg_portion_adv.ipynb         # 3D visualizations
-│   ├── generate_example_figs.ipynb            # Publication figures
-│   └── *.ipynb                                # Other analyses
+│   ├── 00_clipping_vs_sampling_using_opacus.ipynb # Mechanism comparison
+│   ├── 01_plot_teaser.ipynb                   # Teaser figure
+│   ├── 02_generate_example_figs.ipynb          # Publication figures
+│   ├── 03_3D_plot_budg_portion_adv.ipynb       # 3D visualizations
+│   ├── 04_plot_Delta_bound.ipynb               # Theoretical bounds
+│   ├── 05_independence_of_batche_size.ipynb    # Batch size analysis
+│   └── 06_effect_of_larger_delta.ipynb         # Delta parameter analysis
 ├── opacus_new/                                # Modified Opacus library
 │   ├── privacy_engine.py                      # iDP with per-sample budgets
 │   ├── accountants/                           # Privacy accounting
@@ -170,8 +166,8 @@ Reproduce the main attack from Table I:
 
 # Test on Credit Card Default dataset
 cd scripts_experiments/mia
-python ./scripts_experiments/mia/budget_control_adv.py \
-        --exp_yaml ./scripts_experiments/mia/exp_yaml_adv/adult.yaml \
+python ./experiment_scripts/mia/budget_control_adv.py \
+        --exp_yaml ./experiment_scripts/mia/exp_yaml_adv/adult.yaml \
         --idx_start 1 --idx_end 100 &
 ```
 
@@ -208,8 +204,8 @@ Standard iDP only guarantees individual (ε, δ) at a single point. We propose a
 ### Visual Comparison
 
 <p align="center">
-  <img src="figures/figure7.png" alt="Delta-iDP allowable region" width="700"/>
+  <img src="figures/Delta_bound_corrected.svg" alt="Delta-iDP allowable region" width="700"/>
   <br>
-  <em><strong>Figure 7:</strong> Valid parameter region for (8, 10⁻⁵, 0.05)-DP showing how Δ-bounds restrict excess vulnerability.</em>
+  <em><strong>Figure 6:</strong> Valid parameter region for (8, 10⁻⁵, 0.05)-DP showing how Δ-bounds restrict excess vulnerability.</em>
 </p>
 
